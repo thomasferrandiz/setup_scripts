@@ -15,7 +15,7 @@ sudo cp $PWD/registries.yaml $FILE
 
 FILE="/etc/rancher/rke2/config.yaml"
 sudo mkdir -p $(dirname $FILE) 
-sudo cp $PWD/config.yaml $FILE
+sudo cp $PWD/config_server.yaml $FILE
 
 curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE=${INSTALL_RKE2_TYPE} INSTALL_RKE2_CHANNEL=${INSTALL_RKE2_VERSION} sudo sh -
 
