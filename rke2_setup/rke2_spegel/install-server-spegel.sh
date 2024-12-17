@@ -11,19 +11,11 @@ INSTALL_RKE2_TYPE="server"
 
 FILE="/etc/rancher/rke2/registries.yaml"
 sudo mkdir -p $(dirname $FILE) 
-sudo cat << EOF > $FILE 
-mirrors:
-  docker.io:
-  registry.k8s.io:
-EOF
+sudo cp $PWD/registries.yaml $FILE
 
 FILE="/etc/rancher/rke2/config.yaml"
 sudo mkdir -p $(dirname $FILE) 
-sudo cat << EOF > $FILE 
-write-kubeconfig-mode: 644
-token: "secret"
-embedded-registry: true
-EOF
+sudo cp $PWD/config.yaml $FILE
 
 curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE=${INSTALL_RKE2_TYPE} INSTALL_RKE2_CHANNEL=${INSTALL_RKE2_VERSION} sudo sh -
 
