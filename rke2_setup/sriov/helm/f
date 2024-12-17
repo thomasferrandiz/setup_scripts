@@ -1,0 +1,1068 @@
+diff -ry old/sriov/app-README.md new/sriov-network-operator/app-README.md
+# Rancher SR-IOV Network Operator				# Rancher SR-IOV Network Operator
+
+This chart is based on the upstream [k8snetworkplumbingwg/sri	This chart is based on the upstream [k8snetworkplumbingwg/sri
+
+The chart installs the following components:			The chart installs the following components:
+
+ - SR-IOV Operator - An operator that helps provision and con	 - SR-IOV Operator - An operator that helps provision and con
+ - SR-IOV Network Config Daemon - A Daemon deployed by the Op	 - SR-IOV Network Config Daemon - A Daemon deployed by the Op
+
+Note that SR-IOV requires NICs that support SR-IOV and the ac	Note that SR-IOV requires NICs that support SR-IOV and the ac
+
+The SR-IOV Network Config Daemon will be deployed on such cap	The SR-IOV Network Config Daemon will be deployed on such cap
+
+Only in old/sriov/charts: rancher-nfd
+Only in new/sriov-network-operator/charts: sriov-nfd
+diff -ry old/sriov/Chart.yaml new/sriov-network-operator/Chart.yaml
+annotations:						      <
+  catalog.cattle.io/auto-install: sriov-crd=match	      <
+  catalog.cattle.io/certified: rancher			      <
+  catalog.cattle.io/experimental: "true"		      <
+  catalog.cattle.io/kube-version: '>= 1.16.0-0 < 1.29.0-0'    <
+  catalog.cattle.io/namespace: cattle-sriov-system	      <
+  catalog.cattle.io/os: linux				      <
+  catalog.cattle.io/permits-os: linux			      <
+  catalog.cattle.io/rancher-version: '>= 2.8.0-0 < 2.9.0-0'   <
+  catalog.cattle.io/release-name: sriov			      <
+  catalog.cattle.io/upstream-version: 1.2.0		      <
+apiVersion: v2							apiVersion: v2
+appVersion: 1.2.0						appVersion: 1.2.0
+							      >	dependencies:
+							      >	- condition: sriov-nfd.enabled
+							      >	  name: sriov-nfd
+							      >	  repository: file://./charts/sriov-nfd
+							      >	  version: 0.14.1
+description: SR-IOV network operator configures and manages S	description: SR-IOV network operator configures and manages S
+  kubernetes cluster						  kubernetes cluster
+home: https://github.com/k8snetworkplumbingwg/sriov-network-o	home: https://github.com/k8snetworkplumbingwg/sriov-network-o
+icon: https://charts.rancher.io/assets/logos/sr-iov.svg	      <
+keywords:							keywords:
+- sriov								- sriov
+- Networking						      |	kubeVersion: '>= 1.16.0-0'
+kubeVersion: '>= 1.16.0'				      |	name: sriov-network-operator
+maintainers:						      <
+- email: charts@rancher.com				      <
+  name: Rancher Labs					      <
+name: sriov						      <
+sources:							sources:
+- https://github.com/rancher/charts			      |	- https://github.com/k8snetworkplumbingwg/sriov-network-opera
+type: application						type: application
+version: 103.1.0+up0.1.0				      |	version: 1.2.0+up0.1.0
+diff -ry old/sriov/.helmignore new/sriov-network-operator/.helmignore
+# Patterns to ignore when building packages.			# Patterns to ignore when building packages.
+# This supports shell glob matching, relative path matching, 	# This supports shell glob matching, relative path matching, 
+# negation (prefixed with !). Only one pattern per line.	# negation (prefixed with !). Only one pattern per line.
+.DS_Store							.DS_Store
+# Common VCS dirs						# Common VCS dirs
+.git/								.git/
+.gitignore							.gitignore
+.bzr/								.bzr/
+.bzrignore							.bzrignore
+.hg/								.hg/
+.hgignore							.hgignore
+.svn/								.svn/
+# Common backup files						# Common backup files
+*.swp								*.swp
+*.bak								*.bak
+*.tmp								*.tmp
+*.orig								*.orig
+*~								*~
+# Various IDEs							# Various IDEs
+.project							.project
+.idea/								.idea/
+*.tmproj							*.tmproj
+.vscode/							.vscode/
+diff -ry old/sriov/README.md new/sriov-network-operator/README.md
+# SR-IOV Network Operator Helm Chart				# SR-IOV Network Operator Helm Chart
+
+SR-IOV Network Operator Helm Chart provides an easy way to in	SR-IOV Network Operator Helm Chart provides an easy way to in
+the lifecycle of SR-IOV network operator.			the lifecycle of SR-IOV network operator.
+
+## SR-IOV Network Operator					## SR-IOV Network Operator
+SR-IOV Network Operator leverages [Kubernetes CRDs](https://k	SR-IOV Network Operator leverages [Kubernetes CRDs](https://k
+and [Operator SDK](https://github.com/operator-framework/oper	and [Operator SDK](https://github.com/operator-framework/oper
+
+SR-IOV Network Operator features:				SR-IOV Network Operator features:
+- Initialize the supported SR-IOV NIC types on selected nodes	- Initialize the supported SR-IOV NIC types on selected nodes
+- Provision/upgrade SR-IOV device plugin executable on select	- Provision/upgrade SR-IOV device plugin executable on select
+- Provision/upgrade SR-IOV CNI plugin executable on selected 	- Provision/upgrade SR-IOV CNI plugin executable on selected 
+- Manage configuration of SR-IOV device plugin on host.		- Manage configuration of SR-IOV device plugin on host.
+- Generate net-att-def CRs for SR-IOV CNI plugin		- Generate net-att-def CRs for SR-IOV CNI plugin
+- Supports operation in a virtualized Kubernetes deployment	- Supports operation in a virtualized Kubernetes deployment
+  - Discovers VFs attached to the Virtual Machine (VM)		  - Discovers VFs attached to the Virtual Machine (VM)
+  - Does not require attached of associated PFs			  - Does not require attached of associated PFs
+  - VFs can be associated to SriovNetworks by selecting the a	  - VFs can be associated to SriovNetworks by selecting the a
+
+## QuickStart							## QuickStart
+
+### Prerequisites						### Prerequisites
+
+- Kubernetes v1.17+						- Kubernetes v1.17+
+- Helm v3							- Helm v3
+
+### Install Helm						### Install Helm
+
+Helm provides an install script to copy helm binary to your s	Helm provides an install script to copy helm binary to your s
+```								```
+$ curl -fsSL -o get_helm.sh https://raw.githubusercontent.com	$ curl -fsSL -o get_helm.sh https://raw.githubusercontent.com
+$ chmod 500 get_helm.sh						$ chmod 500 get_helm.sh
+$ ./get_helm.sh							$ ./get_helm.sh
+```								```
+
+For additional information and methods for installing Helm, r	For additional information and methods for installing Helm, r
+
+### Deploy SR-IOV Network Operator				### Deploy SR-IOV Network Operator
+
+```								```
+# Install Operator						# Install Operator
+$ helm install -n sriov-network-operator --create-namespace -	$ helm install -n sriov-network-operator --create-namespace -
+
+# View deployed resources					# View deployed resources
+$ kubectl -n sriov-network-operator get pods			$ kubectl -n sriov-network-operator get pods
+```								```
+
+							      >	In the case that [Pod Security Admission](https://kubernetes.
+							      >	```
+							      >	$ kubectl label ns sriov-network-operator pod-security.kubern
+							      >	```
+							      >
+## Chart parameters						## Chart parameters
+
+In order to tailor the deployment of the network operator to 	In order to tailor the deployment of the network operator to 
+We have introduced the following Chart parameters.		We have introduced the following Chart parameters.
+
+							      >	| Name | Type | Default | description |
+							      >	| ---- |------|---------|-------------|
+							      >	| `imagePullSecrets` | list | `[]` | An optional list of refe
+							      >
+### Operator parameters						### Operator parameters
+
+| Name | Type | Default | description |				| Name | Type | Default | description |
+| ---- | ---- | ------- | ----------- |				| ---- | ---- | ------- | ----------- |
+							      >	| `operator.tolerations` | list | `[{"key":"node-role.kuberne
+							      >	| `operator.nodeSelector` | object | {} | Operator's node sel
+							      >	| `operator.affinity` | object | `{"nodeAffinity":{"preferred
+							      >	| `operator.nameOverride` | string | `` | Operator's resource
+							      >	| `operator.fullnameOverride` | string | `` | Operator's reso
+| `operator.resourcePrefix` | string | `openshift.io` | Devic	| `operator.resourcePrefix` | string | `openshift.io` | Devic
+| `operator.enableAdmissionController` | bool | `false` | Ena <
+| `operator.cniBinPath` | string | `/opt/cni/bin` | Path for 	| `operator.cniBinPath` | string | `/opt/cni/bin` | Path for 
+| `operator.clusterType` | string | `kubernetes` | Cluster en |	| `operator.clustertype` | string | `kubernetes` | Cluster en
+							      >
+							      >	#### Admission Controllers parameters
+							      >
+							      >	The admission controllers can be enabled by switching on a si
+							      >	default, the user needs to pre-create Kubernetes Secrets that
+							      >	`operator.admissionControllers.certificates.secretNames`. The
+							      >	content:
+							      >	* `ca.crt` (value needs to be base64 encoded twice)
+							      >	* `tls.crt`
+							      >	* `tls.key`
+							      >
+							      >	Aside from the aforementioned mode, the chart supports 3 more
+							      >	controllers, which can be found in the table below. In a nuts
+							      >	* Consume pre-created Certificates managed by cert-manager
+							      >	* Generate self signed Certificates managed by cert-manager
+							      >	* Specify the content of the certificates as Helm values
+							      >
+							      >	| Name | Type | Default | description |
+							      >	| ---- | ---- | ------- | ----------- |
+							      >	| `operator.admissionControllers.enabled` | bool | false | Fl
+							      >	| `operator.admissionControllers.certificates.secretNames.ope
+							      >	| `operator.admissionControllers.certificates.secretNames.inj
+							      >	| `operator.admissionControllers.certificates.certManager.ena
+							      >	| `operator.admissionControllers.certificates.certManager.gen
+							      >	| `operator.admissionControllers.certificates.custom.enabled`
+							      >	| `operator.admissionControllers.certificates.custom.operator
+							      >	| `operator.admissionControllers.certificates.custom.operator
+							      >	| `operator.admissionControllers.certificates.custom.operator
+							      >	| `operator.admissionControllers.certificates.custom.injector
+							      >	| `operator.admissionControllers.certificates.custom.injector
+							      >	| `operator.admissionControllers.certificates.custom.injector
+							      >
+							      >	### SR-IOV Operator Configuration Parameters
+							      >
+							      >	This section contains general parameters that apply to both t
+							      >
+							      >	| Name | Type | Default | description |
+							      >	| ---- | ---- | ------- | ----------- |
+							      >	| `sriovOperatorConfig.deploy` | bool | `false` | deploy Srio
+							      >	| `sriovOperatorConfig.configDaemonNodeSelector` | map[string
+							      >	| `sriovOperatorConfig.logLevel` | int | `2` | log level for 
+							      >	| `sriovOperatorConfig.disableDrain` | bool | `false` | disab
+							      >	| `sriovOperatorConfig.configurationMode` | string | `daemon`
+
+### Images parameters						### Images parameters
+
+| Name | description |						| Name | description |
+| ---- | ----------- |						| ---- | ----------- |
+| `images.operator` | Operator controller image |		| `images.operator` | Operator controller image |
+| `images.sriovConfigDaemon` | Daemon node agent image |	| `images.sriovConfigDaemon` | Daemon node agent image |
+| `images.sriovCni` | SR-IOV CNI image |			| `images.sriovCni` | SR-IOV CNI image |
+| `images.ibSriovCni` | InfiniBand SR-IOV CNI image |		| `images.ibSriovCni` | InfiniBand SR-IOV CNI image |
+| `images.sriovDevicePlugin` | SR-IOV device plugin image |	| `images.sriovDevicePlugin` | SR-IOV device plugin image |
+| `images.resourcesInjector` | Resources Injector image |	| `images.resourcesInjector` | Resources Injector image |
+| `images.webhook` | Operator Webhook image |			| `images.webhook` | Operator Webhook image |
+Only in new/sriov-network-operator/templates: certificate.yaml
+diff -ry old/sriov/templates/certmanagercerts.yaml new/sriov-network-operator/templates/certmanagercerts.yaml
+{{- if and (.Values.operator.enableAdmissionController) (.Val	{{- if and (.Values.operator.enableAdmissionController) (.Val
+{{- if not (.Capabilities.APIVersions.Has "cert-manager.io/v1	{{- if not (.Capabilities.APIVersions.Has "cert-manager.io/v1
+{{- required "cert-manager is required but not found" "" -}}	{{- required "cert-manager is required but not found" "" -}}
+{{- end -}}							{{- end -}}
+apiVersion: cert-manager.io/v1					apiVersion: cert-manager.io/v1
+kind: Issuer							kind: Issuer
+metadata:							metadata:
+  name: sriov-network-operator-selfsigned-issuer		  name: sriov-network-operator-selfsigned-issuer
+  namespace: {{ .Release.Namespace }}				  namespace: {{ .Release.Namespace }}
+spec:								spec:
+  selfSigned: {}						  selfSigned: {}
+---								---
+apiVersion: cert-manager.io/v1					apiVersion: cert-manager.io/v1
+kind: Certificate						kind: Certificate
+metadata:							metadata:
+  name: operator-webhook-service				  name: operator-webhook-service
+  namespace: {{ .Release.Namespace }}				  namespace: {{ .Release.Namespace }}
+spec:								spec:
+  secretName: operator-webhook-service				  secretName: operator-webhook-service
+  dnsNames:							  dnsNames:
+  - operator-webhook-service.{{ .Release.Namespace }}.svc	  - operator-webhook-service.{{ .Release.Namespace }}.svc
+  issuerRef:							  issuerRef:
+    name: sriov-network-operator-selfsigned-issuer		    name: sriov-network-operator-selfsigned-issuer
+  privateKey:							  privateKey:
+    rotationPolicy: Always					    rotationPolicy: Always
+---								---
+apiVersion: cert-manager.io/v1					apiVersion: cert-manager.io/v1
+kind: Certificate						kind: Certificate
+metadata:							metadata:
+  name: network-resources-injector-service			  name: network-resources-injector-service
+  namespace: {{ .Release.Namespace }}				  namespace: {{ .Release.Namespace }}
+spec:								spec:
+  secretName: network-resources-injector-secret			  secretName: network-resources-injector-secret
+  dnsNames:							  dnsNames:
+  - network-resources-injector-service.{{ .Release.Namespace 	  - network-resources-injector-service.{{ .Release.Namespace 
+  issuerRef:							  issuerRef:
+    name: sriov-network-operator-selfsigned-issuer		    name: sriov-network-operator-selfsigned-issuer
+  privateKey:							  privateKey:
+    rotationPolicy: Always					    rotationPolicy: Always
+{{- end -}}							{{- end -}}
+
+diff -ry old/sriov/templates/clusterrolebinding.yaml new/sriov-network-operator/templates/clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1			apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding					kind: ClusterRoleBinding
+metadata:							metadata:
+  name: {{ include "sriov-network-operator.fullname" . }}	  name: {{ include "sriov-network-operator.fullname" . }}
+  labels:							  labels:
+  {{- include "sriov-network-operator.labels" . | nindent 4 }	  {{- include "sriov-network-operator.labels" . | nindent 4 }
+roleRef:							roleRef:
+  kind: ClusterRole						  kind: ClusterRole
+  name: {{ include "sriov-network-operator.fullname" . }}	  name: {{ include "sriov-network-operator.fullname" . }}
+  apiGroup: rbac.authorization.k8s.io				  apiGroup: rbac.authorization.k8s.io
+subjects:							subjects:
+  - kind: ServiceAccount					  - kind: ServiceAccount
+    namespace: {{ .Release.Namespace }}				    namespace: {{ .Release.Namespace }}
+    name: {{ include "sriov-network-operator.fullname" . }}	    name: {{ include "sriov-network-operator.fullname" . }}
+---								---
+apiVersion: rbac.authorization.k8s.io/v1			apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding					kind: ClusterRoleBinding
+metadata:							metadata:
+  name: sriov-network-config-daemon				  name: sriov-network-config-daemon
+  labels:							  labels:
+  {{- include "sriov-network-operator.labels" . | nindent 4 }	  {{- include "sriov-network-operator.labels" . | nindent 4 }
+roleRef:							roleRef:
+  kind: ClusterRole						  kind: ClusterRole
+  name: sriov-network-config-daemon				  name: sriov-network-config-daemon
+  apiGroup: rbac.authorization.k8s.io				  apiGroup: rbac.authorization.k8s.io
+subjects:							subjects:
+  - kind: ServiceAccount					  - kind: ServiceAccount
+    namespace: {{ .Release.Namespace }}				    namespace: {{ .Release.Namespace }}
+    name: sriov-network-config-daemon				    name: sriov-network-config-daemon
+diff -ry old/sriov/templates/clusterrole.yaml new/sriov-network-operator/templates/clusterrole.yaml
+apiVersion: rbac.authorization.k8s.io/v1			apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole						kind: ClusterRole
+metadata:							metadata:
+  name: {{ include "sriov-network-operator.fullname" . }}	  name: {{ include "sriov-network-operator.fullname" . }}
+  labels:							  labels:
+  {{- include "sriov-network-operator.labels" . | nindent 4 }	  {{- include "sriov-network-operator.labels" . | nindent 4 }
+rules:								rules:
+  - apiGroups: [""]						  - apiGroups: [""]
+    resources: ["nodes"]					    resources: ["nodes"]
+    verbs: ["get", "list", "watch", "patch", "update"]		    verbs: ["get", "list", "watch", "patch", "update"]
+  - apiGroups: [""]						  - apiGroups: [""]
+    resources: ["pods"]						    resources: ["pods"]
+    verbs: ["*"]						    verbs: ["*"]
+							      >	  - apiGroups: [""]
+							      >	    resources: ["pods/eviction"]
+							      >	    verbs: ["create"]
+  - apiGroups: ["apps"]						  - apiGroups: ["apps"]
+    resources: ["daemonsets"]					    resources: ["daemonsets"]
+    verbs: ["get"]						    verbs: ["get"]
+  - apiGroups: [""]						  - apiGroups: [""]
+    resources: ["namespaces", "serviceaccounts"]		    resources: ["namespaces", "serviceaccounts"]
+    verbs: ["*"]						    verbs: ["*"]
+  - apiGroups: ["k8s.cni.cncf.io"]				  - apiGroups: ["k8s.cni.cncf.io"]
+    resources: ["network-attachment-definitions"]		    resources: ["network-attachment-definitions"]
+    verbs: ["*"]						    verbs: ["*"]
+  - apiGroups: ["rbac.authorization.k8s.io"]			  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles", "clusterrolebindings"]	      |	    resources: [clusterroles, clusterrolebindings]
+    verbs: ["*"]						    verbs: ["*"]
+  - apiGroups: ["admissionregistration.k8s.io"]			  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingwebhookconfigurations", "validatingw	    resources: ["mutatingwebhookconfigurations", "validatingw
+    verbs: ["*"]						    verbs: ["*"]
+  - apiGroups: ["sriovnetwork.openshift.io"]			  - apiGroups: ["sriovnetwork.openshift.io"]
+    resources: ["*"]						    resources: ["*"]
+    verbs: ["*"]						    verbs: ["*"]
+  - apiGroups: ["machineconfiguration.openshift.io"]		  - apiGroups: ["machineconfiguration.openshift.io"]
+    resources: ["*"]						    resources: ["*"]
+    verbs: ["*"]						    verbs: ["*"]
+  - apiGroups: ["config.openshift.io"]				  - apiGroups: ["config.openshift.io"]
+    resources: ["infrastructures"]				    resources: ["infrastructures"]
+    verbs: ["get", "list", "watch"]				    verbs: ["get", "list", "watch"]
+---								---
+apiVersion: rbac.authorization.k8s.io/v1			apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole						kind: ClusterRole
+metadata:							metadata:
+  name: sriov-network-config-daemon				  name: sriov-network-config-daemon
+  labels:							  labels:
+  {{- include "sriov-network-operator.labels" . | nindent 4 }	  {{- include "sriov-network-operator.labels" . | nindent 4 }
+rules:								rules:
+  - apiGroups: [""]						  - apiGroups: [""]
+    resources: ["nodes"]					    resources: ["nodes"]
+    verbs: ["get", "list", "watch", "patch", "update"]		    verbs: ["get", "list", "watch", "patch", "update"]
+  - apiGroups: [""]						  - apiGroups: [""]
+    resources: ["pods"]						    resources: ["pods"]
+    verbs: ["*"]						    verbs: ["*"]
+  - apiGroups: ["apps"]						  - apiGroups: ["apps"]
+    resources: ["daemonsets"]					    resources: ["daemonsets"]
+    verbs: ["get"]						    verbs: ["get"]
+  - apiGroups: [""]					      |	  - apiGroups: [ "config.openshift.io" ]
+    resources: ["pods/eviction"]			      |	    resources: [ "infrastructures" ]
+    verbs: ["create"]					      |	    verbs: [ "get", "list", "watch" ]
+---								---
+apiVersion: rbac.authorization.k8s.io/v1			apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole						kind: ClusterRole
+metadata:							metadata:
+  name: sriov-admin						  name: sriov-admin
+  {{- if .Values.global.rbac.userRoles.aggregateToDefaultRole	  {{- if .Values.global.rbac.userRoles.aggregateToDefaultRole
+    rbac.authorization.k8s.io/aggregate-to-admin: "true"	    rbac.authorization.k8s.io/aggregate-to-admin: "true"
+  {{- end }}							  {{- end }}
+rules:								rules:
+- apiGroups:							- apiGroups:
+  - sriovnetwork.openshift.io					  - sriovnetwork.openshift.io
+  resources:							  resources:
+  - '*'								  - '*'
+  verbs:							  verbs:
+  - "get"							  - "get"
+  - "watch"							  - "watch"
+  - "list"							  - "list"
+---								---
+apiVersion: rbac.authorization.k8s.io/v1			apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole						kind: ClusterRole
+metadata:							metadata:
+  name: sriov-edit						  name: sriov-edit
+  {{- if .Values.global.rbac.userRoles.aggregateToDefaultRole	  {{- if .Values.global.rbac.userRoles.aggregateToDefaultRole
+    rbac.authorization.k8s.io/aggregate-to-edit: "true"		    rbac.authorization.k8s.io/aggregate-to-edit: "true"
+  {{- end }}							  {{- end }}
+rules:								rules:
+- apiGroups:							- apiGroups:
+  - sriovnetwork.openshift.io					  - sriovnetwork.openshift.io
+  resources:							  resources:
+  - '*'								  - '*'
+  verbs:							  verbs:
+  - "get"							  - "get"
+  - "watch"							  - "watch"
+  - "list"							  - "list"
+---								---
+apiVersion: rbac.authorization.k8s.io/v1			apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole						kind: ClusterRole
+metadata:							metadata:
+  name: sriov-view						  name: sriov-view
+  {{- if .Values.global.rbac.userRoles.aggregateToDefaultRole	  {{- if .Values.global.rbac.userRoles.aggregateToDefaultRole
+    rbac.authorization.k8s.io/aggregate-to-view: "true"		    rbac.authorization.k8s.io/aggregate-to-view: "true"
+  {{- end }}							  {{- end }}
+rules:								rules:
+- apiGroups:							- apiGroups:
+  - sriovnetwork.openshift.io					  - sriovnetwork.openshift.io
+  resources:							  resources:
+  - '*'								  - '*'
+  verbs:							  verbs:
+  - "get"							  - "get"
+  - "watch"							  - "watch"
+  - "list"							  - "list"
+							      <
+diff -ry old/sriov/templates/configmap.yaml new/sriov-network-operator/templates/configmap.yaml
+apiVersion: v1							apiVersion: v1
+kind: ConfigMap							kind: ConfigMap
+metadata:							metadata:
+  name: supported-nic-ids					  name: supported-nic-ids
+data:								data:
+  Intel_i40e_XXV710: "8086 158a 154c"				  Intel_i40e_XXV710: "8086 158a 154c"
+  Intel_i40e_25G_SFP28: "8086 158b 154c"			  Intel_i40e_25G_SFP28: "8086 158b 154c"
+  Intel_i40e_10G_X710_SFP: "8086 1572 154c"			  Intel_i40e_10G_X710_SFP: "8086 1572 154c"
+							      >	  Intel_ixgbe_10G_X550: "8086 1563 1565"
+							      >	  Intel_ixgbe_82576: "8086 10c9 10ca"
+							      >	  Intel_i40e_X710_X557_AT_10G: "8086 1589 154c"
+							      >	  Intel_i40e_10G_X710_BACKPLANE: "8086 1581 154c"
+							      >	  Intel_i40e_10G_X710_BASE_T: "8086 15ff 154c"
+  Intel_i40e_XXV710_N3000: "8086 0d58 154c"			  Intel_i40e_XXV710_N3000: "8086 0d58 154c"
+  Intel_i40e_40G_XL710_QSFP: "8086 1583 154c"			  Intel_i40e_40G_XL710_QSFP: "8086 1583 154c"
+							      >	  Intel_i40e_X550T: "8086 1563 1565"
+							      >	  Intel_i40e_X722: "8086 37d2 37cd"
+							      >	  Intel_i40e_X722_SFP: "8086 37d0 37cd"
+							      >	  Intel_i40e_X722_SFPP: "8086 37d3 37cd"
+  Intel_ice_Columbiaville_E810-CQDA2_2CQDA2: "8086 1592 1889"	  Intel_ice_Columbiaville_E810-CQDA2_2CQDA2: "8086 1592 1889"
+  Intel_ice_Columbiaville_E810-XXVDA4: "8086 1593 1889"		  Intel_ice_Columbiaville_E810-XXVDA4: "8086 1593 1889"
+  Intel_ice_Columbiaville_E810-XXVDA2: "8086 159b 1889"		  Intel_ice_Columbiaville_E810-XXVDA2: "8086 159b 1889"
+  Intel_ice_Columbiaville_E810: "8086 1591 1889"		  Intel_ice_Columbiaville_E810: "8086 1591 1889"
+							      >	  Intel_ice_Columbiapark_E823C: "8086 188a 1889"
+  Nvidia_mlx5_ConnectX-4: "15b3 1013 1014"			  Nvidia_mlx5_ConnectX-4: "15b3 1013 1014"
+  Nvidia_mlx5_ConnectX-4LX: "15b3 1015 1016"			  Nvidia_mlx5_ConnectX-4LX: "15b3 1015 1016"
+  Nvidia_mlx5_ConnectX-5: "15b3 1017 1018"			  Nvidia_mlx5_ConnectX-5: "15b3 1017 1018"
+  Nvidia_mlx5_ConnectX-5_Ex: "15b3 1019 101a"			  Nvidia_mlx5_ConnectX-5_Ex: "15b3 1019 101a"
+  Nvidia_mlx5_ConnectX-6: "15b3 101b 101c"			  Nvidia_mlx5_ConnectX-6: "15b3 101b 101c"
+  Nvidia_mlx5_ConnectX-6_Dx: "15b3 101d 101e"			  Nvidia_mlx5_ConnectX-6_Dx: "15b3 101d 101e"
+							      >	  Nvidia_mlx5_ConnectX-6_Lx: "15b3 101f 101e"
+							      >	  Nvidia_mlx5_ConnectX-7: "15b3 1021 101e"
+  Nvidia_mlx5_MT42822_BlueField-2_integrated_ConnectX-6_Dx: "	  Nvidia_mlx5_MT42822_BlueField-2_integrated_ConnectX-6_Dx: "
+							      >	  Nvidia_mlx5_MT43244_BlueField-3_integrated_ConnectX-7_Dx: "
+  Broadcom_bnxt_BCM57414_2x25G: "14e4 16d7 16dc"		  Broadcom_bnxt_BCM57414_2x25G: "14e4 16d7 16dc"
+  Broadcom_bnxt_BCM75508_2x100G: "14e4 1750 1806"		  Broadcom_bnxt_BCM75508_2x100G: "14e4 1750 1806"
+  Qlogic_qede_QL45000_50G: "1077 1654 1664"			  Qlogic_qede_QL45000_50G: "1077 1654 1664"
+  Red_Hat_Virtio_network_device: "1af4 1000 1000"		  Red_Hat_Virtio_network_device: "1af4 1000 1000"
+							      >	  Red_Hat_Virtio_1_0_network_device: "1af4 1041 1041"
+							      >	  Marvell_OCTEON_TX2_CN96XX: "177d b200 b203"
+							      >	  Marvell_OCTEON_TX2_CN98XX: "177d b100 b103"
+							      >	  Marvell_OCTEON_Fusion_CNF95XX: "177d b600 b603"
+							      >	  Marvell_OCTEON10_CN10XXX: "177d b900 b903"
+							      >	  Marvell_OCTEON_Fusion_CNF105XX: "177d ba00 ba03"
+diff -ry old/sriov/templates/_helpers.tpl new/sriov-network-operator/templates/_helpers.tpl
+{{/*								{{/*
+Expand the name of the chart.					Expand the name of the chart.
+*/}}								*/}}
+{{- define "sriov-network-operator.name" -}}			{{- define "sriov-network-operator.name" -}}
+{{- default .Chart.Name .Values.nameOverride | trunc 63 | tri	{{- default .Chart.Name .Values.nameOverride | trunc 63 | tri
+{{- end }}							{{- end }}
+
+{{/*								{{/*
+Create a default fully qualified app name.			Create a default fully qualified app name.
+We truncate at 63 chars because some Kubernetes name fields a	We truncate at 63 chars because some Kubernetes name fields a
+If release name contains chart name it will be used as a full	If release name contains chart name it will be used as a full
+*/}}								*/}}
+{{- define "sriov-network-operator.fullname" -}}		{{- define "sriov-network-operator.fullname" -}}
+{{- if .Values.fullnameOverride }}				{{- if .Values.fullnameOverride }}
+{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}	{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- else }}							{{- else }}
+{{- $name := default .Chart.Name .Values.nameOverride }}	{{- $name := default .Chart.Name .Values.nameOverride }}
+{{- if contains $name .Release.Name }}				{{- if contains $name .Release.Name }}
+{{- .Release.Name | trunc 63 | trimSuffix "-" }}		{{- .Release.Name | trunc 63 | trimSuffix "-" }}
+{{- else }}							{{- else }}
+{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffi	{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffi
+{{- end }}							{{- end }}
+{{- end }}							{{- end }}
+{{- end }}							{{- end }}
+
+{{/*								{{/*
+Create chart name and version as used by the chart label.	Create chart name and version as used by the chart label.
+*/}}								*/}}
+{{- define "sriov-network-operator.chart" -}}			{{- define "sriov-network-operator.chart" -}}
+{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "	{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "
+{{- end }}							{{- end }}
+
+{{/*								{{/*
+Common labels							Common labels
+*/}}								*/}}
+{{- define "sriov-network-operator.labels" -}}			{{- define "sriov-network-operator.labels" -}}
+helm.sh/chart: {{ include "sriov-network-operator.chart" . }}	helm.sh/chart: {{ include "sriov-network-operator.chart" . }}
+{{ include "sriov-network-operator.selectorLabels" . }}		{{ include "sriov-network-operator.selectorLabels" . }}
+{{- if .Chart.AppVersion }}					{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}	app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}							{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}		app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}							{{- end }}
+
+{{/*								{{/*
+Selector labels							Selector labels
+*/}}								*/}}
+{{- define "sriov-network-operator.selectorLabels" -}}		{{- define "sriov-network-operator.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "sriov-network-operator.na	app.kubernetes.io/name: {{ include "sriov-network-operator.na
+app.kubernetes.io/instance: {{ .Release.Name }}			app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}							{{- end }}
+
+{{/*								{{/*
+Create the name of the service account to use			Create the name of the service account to use
+*/}}								*/}}
+{{- define "sriov-network-operator.serviceAccountName" -}}	{{- define "sriov-network-operator.serviceAccountName" -}}
+{{- if .Values.serviceAccount.create }}				{{- if .Values.serviceAccount.create }}
+{{- default (include "sriov-network-operator.fullname" .) .Va	{{- default (include "sriov-network-operator.fullname" .) .Va
+{{- else }}							{{- else }}
+{{- default "default" .Values.serviceAccount.name }}		{{- default "default" .Values.serviceAccount.name }}
+{{- end }}							{{- end }}
+{{- end }}							{{- end }}
+
+{{- define "system_default_registry" -}}			{{- define "system_default_registry" -}}
+{{- if .Values.global.cattle.systemDefaultRegistry -}}		{{- if .Values.global.cattle.systemDefaultRegistry -}}
+{{- printf "%s/" .Values.global.cattle.systemDefaultRegistry 	{{- printf "%s/" .Values.global.cattle.systemDefaultRegistry 
+{{- else -}}							{{- else -}}
+{{- "" -}}							{{- "" -}}
+{{- end -}}							{{- end -}}
+{{- end -}}							{{- end -}}
+
+{{/*								{{/*
+Windows cluster will add default taint for linux nodes,		Windows cluster will add default taint for linux nodes,
+add below linux tolerations to workloads could be scheduled t	add below linux tolerations to workloads could be scheduled t
+*/}}								*/}}
+{{- define "linux-node-tolerations" -}}				{{- define "linux-node-tolerations" -}}
+- key: "cattle.io/os"						- key: "cattle.io/os"
+  value: "linux"						  value: "linux"
+  effect: "NoSchedule"						  effect: "NoSchedule"
+  operator: "Equal"						  operator: "Equal"
+{{- end -}}							{{- end -}}
+
+{{- define "linux-node-selector" -}}				{{- define "linux-node-selector" -}}
+kubernetes.io/os: linux						kubernetes.io/os: linux
+{{- end -}}							{{- end -}}
+diff -ry old/sriov/templates/NOTES.txt new/sriov-network-operator/templates/NOTES.txt
+Get Network Operator deployed resources by running the follow	Get Network Operator deployed resources by running the follow
+
+$ kubectl -n {{ .Release.Namespace }} get pods			$ kubectl -n {{ .Release.Namespace }} get pods
+
+For additional instructions on how to use SR-IOV network oper	For additional instructions on how to use SR-IOV network oper
+refer to: https://github.com/k8snetworkplumbingwg/sriov-netwo	refer to: https://github.com/k8snetworkplumbingwg/sriov-netwo
+
+{{- if .Values.operator.enableAdmissionController }}		{{- if .Values.operator.enableAdmissionController }}
+{{- if not .Values.cert_manager }}				{{- if not .Values.cert_manager }}
+Thank you for installing {{ .Chart.Name }}.			Thank you for installing {{ .Chart.Name }}.
+
+WARNING! Self signed certificates have been generated for web	WARNING! Self signed certificates have been generated for web
+These certificates have a one-year validity and will not be r	These certificates have a one-year validity and will not be r
+automatically. This should not be a production cluster. Pleas	automatically. This should not be a production cluster. Pleas
+and use cert-manager for production clusters.			and use cert-manager for production clusters.
+{{- end }}							{{- end }}
+{{- end }}							{{- end }}
+diff -ry old/sriov/templates/operator.yaml new/sriov-network-operator/templates/operator.yaml
+{{- if not (.Capabilities.APIVersions.Has "k8s.cni.cncf.io/v1	{{- if not (.Capabilities.APIVersions.Has "k8s.cni.cncf.io/v1
+{{- required "rke2-multus is required but not found" "" -}}	{{- required "rke2-multus is required but not found" "" -}}
+{{- end -}}							{{- end -}}
+apiVersion: sriovnetwork.openshift.io/v1		      <
+kind: SriovOperatorConfig				      <
+metadata:						      <
+  name: default						      <
+  namespace: {{ .Release.Namespace }}			      <
+spec:							      <
+  # Add fields here					      <
+  enableInjector: {{ .Values.operator.enableAdmissionControll <
+  enableOperatorWebhook: {{ .Values.operator.enableAdmissionC <
+  configDaemonNodeSelector: {feature.node.kubernetes.io/netwo <
+---								---
+apiVersion: apps/v1						apiVersion: apps/v1
+kind: Deployment						kind: Deployment
+metadata:							metadata:
+  name: {{ include "sriov-network-operator.fullname" . }}	  name: {{ include "sriov-network-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}				  namespace: {{ .Release.Namespace }}
+  labels:							  labels:
+  {{- include "sriov-network-operator.labels" . | nindent 4 }	  {{- include "sriov-network-operator.labels" . | nindent 4 }
+spec:								spec:
+  replicas: 1							  replicas: 1
+  selector:							  selector:
+    matchLabels:						    matchLabels:
+      name: sriov-network-operator				      name: sriov-network-operator
+  strategy:							  strategy:
+    type: RollingUpdate						    type: RollingUpdate
+    rollingUpdate:						    rollingUpdate:
+      maxUnavailable: 33%					      maxUnavailable: 33%
+  template:							  template:
+    metadata:							    metadata:
+      labels:							      labels:
+        name: sriov-network-operator				        name: sriov-network-operator
+    spec:							    spec:
+      nodeSelector: {{ include "linux-node-selector" . | nind |	      {{- with .Values.operator.nodeSelector }}
+{{- if .Values.operator.nodeSelector }}			      |	      nodeSelector:
+{{ toYaml .Values.operator.nodeSelector | indent 8 }}	      |	      {{- toYaml . | nindent 8 }}
+{{- end }}						      |	      {{- end }}
+      tolerations: {{ include "linux-node-tolerations" . | ni |	      {{- with .Values.operator.affinity }}
+{{- if .Values.operator.tolerations }}			      |	      affinity:
+{{ toYaml .Values.operator.tolerations | indent 8 }}	      |	        {{- toYaml . | nindent 8}}
+{{- end }}						      |	      {{- end }}
+							      >	      {{- with .Values.operator.tolerations }}
+							      >	      tolerations:
+							      >	      {{- toYaml . | nindent 8 }}
+							      >	      {{- end }}
+      serviceAccountName: {{ include "sriov-network-operator.	      serviceAccountName: {{ include "sriov-network-operator.
+      priorityClassName: "system-node-critical"			      priorityClassName: "system-node-critical"
+							      >	      {{- if .Values.imagePullSecrets }}
+							      >	      imagePullSecrets:
+							      >	      {{- range .Values.imagePullSecrets }}
+							      >	      - name: {{ . }}
+							      >	      {{- end }}
+							      >	      {{- end }}
+      containers:						      containers:
+        - name: {{ include "sriov-network-operator.fullname" 	        - name: {{ include "sriov-network-operator.fullname" 
+          image: {{ include "system_default_registry" . }}{{ 	          image: {{ include "system_default_registry" . }}{{ 
+          command:						          command:
+            - sriov-network-operator				            - sriov-network-operator
+          imagePullPolicy: IfNotPresent			      <
+          resources:						          resources:
+            requests:						            requests:
+              cpu: 100m						              cpu: 100m
+              memory: 100Mi					              memory: 100Mi
+          env:							          env:
+            - name: WATCH_NAMESPACE				            - name: WATCH_NAMESPACE
+              valueFrom:					              valueFrom:
+                fieldRef:					                fieldRef:
+                  fieldPath: metadata.namespace			                  fieldPath: metadata.namespace
+            - name: SRIOV_CNI_IMAGE				            - name: SRIOV_CNI_IMAGE
+              value: {{ include "system_default_registry" . }	              value: {{ include "system_default_registry" . }
+            - name: SRIOV_INFINIBAND_CNI_IMAGE			            - name: SRIOV_INFINIBAND_CNI_IMAGE
+              value: {{ include "system_default_registry" . }	              value: {{ include "system_default_registry" . }
+            - name: SRIOV_DEVICE_PLUGIN_IMAGE			            - name: SRIOV_DEVICE_PLUGIN_IMAGE
+              value: {{ include "system_default_registry" . }	              value: {{ include "system_default_registry" . }
+            - name: NETWORK_RESOURCES_INJECTOR_IMAGE		            - name: NETWORK_RESOURCES_INJECTOR_IMAGE
+              value: {{ include "system_default_registry" . }	              value: {{ include "system_default_registry" . }
+            - name: OPERATOR_NAME				            - name: OPERATOR_NAME
+              value: sriov-network-operator			              value: sriov-network-operator
+            - name: SRIOV_NETWORK_CONFIG_DAEMON_IMAGE		            - name: SRIOV_NETWORK_CONFIG_DAEMON_IMAGE
+              value: {{ include "system_default_registry" . }	              value: {{ include "system_default_registry" . }
+            - name: SRIOV_NETWORK_WEBHOOK_IMAGE			            - name: SRIOV_NETWORK_WEBHOOK_IMAGE
+              value: {{ include "system_default_registry" . }	              value: {{ include "system_default_registry" . }
+            - name: RESOURCE_PREFIX				            - name: RESOURCE_PREFIX
+              value: {{ .Values.operator.resourcePrefix }}	              value: {{ .Values.operator.resourcePrefix }}
+            - name: ENABLE_ADMISSION_CONTROLLER		      |	            - name: IMAGE_PULL_SECRETS
+              value: {{ .Values.operator.enableAdmissionContr |	              value: {{ join "," .Values.imagePullSecrets }}
+            - name: NAMESPACE					            - name: NAMESPACE
+              valueFrom:					              valueFrom:
+                fieldRef:					                fieldRef:
+                  fieldPath: metadata.namespace			                  fieldPath: metadata.namespace
+            - name: POD_NAME					            - name: POD_NAME
+              valueFrom:					              valueFrom:
+                fieldRef:					                fieldRef:
+                  fieldPath: metadata.name			                  fieldPath: metadata.name
+							      >	            - name: NODE_NAME
+							      >	              valueFrom:
+							      >	                fieldRef:
+							      >	                  fieldPath: spec.nodeName
+            - name: RELEASE_VERSION				            - name: RELEASE_VERSION
+              value: {{ .Release.AppVersion }}			              value: {{ .Release.AppVersion }}
+            - name: SRIOV_CNI_BIN_PATH				            - name: SRIOV_CNI_BIN_PATH
+              value: {{ .Values.operator.cniBinPath }}		              value: {{ .Values.operator.cniBinPath }}
+            - name: CLUSTER_TYPE				            - name: CLUSTER_TYPE
+              value: {{ .Values.operator.clusterType }}		              value: {{ .Values.operator.clusterType }}
+            {{- if .Values.operator.enableAdmissionController |	        {{- if .Values.operator.admissionControllers.enabled 
+            {{- if not .Values.cert_manager }}		      |	            - name: ADMISSION_CONTROLLERS_CERTIFICATES_OPERAT
+            - name: WEBHOOK_CA_BUNDLE			      |	              value: {{ .Values.operator.admissionControllers
+              value: "{{ include "sriov_operator_ca_cert" . } |	            - name: ADMISSION_CONTROLLERS_CERTIFICATES_INJECT
+            {{- end }}					      |	              value: {{ .Values.operator.admissionControllers
+            {{- end }}					      |	        {{- if .Values.operator.admissionControllers.certific
+							      >	            - name: ADMISSION_CONTROLLERS_CERTIFICATES_CERT_M
+							      >	              value: {{ .Values.operator.admissionControllers
+							      >	        {{- else }}
+							      >	            - name: ADMISSION_CONTROLLERS_CERTIFICATES_OPERAT
+							      >	              valueFrom:
+							      >	                secretKeyRef:
+							      >	                  name: {{ .Values.operator.admissionControll
+							      >	                  key: ca.crt
+							      >	            - name: ADMISSION_CONTROLLERS_CERTIFICATES_INJECT
+							      >	              valueFrom:
+							      >	                secretKeyRef:
+							      >	                  name: {{ .Values.operator.admissionControll
+							      >	                  key: ca.crt
+							      >	        {{- end }}
+							      >	        {{- end }}
+diff -ry old/sriov/templates/rolebinding.yaml new/sriov-network-operator/templates/rolebinding.yaml
+kind: RoleBinding						kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1			apiVersion: rbac.authorization.k8s.io/v1
+metadata:							metadata:
+  name: {{ include "sriov-network-operator.fullname" . }}	  name: {{ include "sriov-network-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}				  namespace: {{ .Release.Namespace }}
+  labels:							  labels:
+  {{- include "sriov-network-operator.labels" . | nindent 4 }	  {{- include "sriov-network-operator.labels" . | nindent 4 }
+subjects:							subjects:
+  - kind: ServiceAccount					  - kind: ServiceAccount
+    name: {{ include "sriov-network-operator.fullname" . }}	    name: {{ include "sriov-network-operator.fullname" . }}
+    namespace: {{ .Release.Namespace }}				    namespace: {{ .Release.Namespace }}
+roleRef:							roleRef:
+  kind: Role							  kind: Role
+  name: {{ include "sriov-network-operator.fullname" . }}	  name: {{ include "sriov-network-operator.fullname" . }}
+  apiGroup: rbac.authorization.k8s.io				  apiGroup: rbac.authorization.k8s.io
+---								---
+kind: RoleBinding						kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1			apiVersion: rbac.authorization.k8s.io/v1
+metadata:							metadata:
+  name: sriov-network-config-daemon				  name: sriov-network-config-daemon
+  namespace: {{ .Release.Namespace }}				  namespace: {{ .Release.Namespace }}
+  labels:							  labels:
+  {{- include "sriov-network-operator.labels" . | nindent 4 }	  {{- include "sriov-network-operator.labels" . | nindent 4 }
+subjects:							subjects:
+  - kind: ServiceAccount					  - kind: ServiceAccount
+    name: sriov-network-config-daemon				    name: sriov-network-config-daemon
+    namespace: {{ .Release.Namespace }}				    namespace: {{ .Release.Namespace }}
+roleRef:							roleRef:
+  kind: Role							  kind: Role
+  name: sriov-network-config-daemon				  name: sriov-network-config-daemon
+  apiGroup: rbac.authorization.k8s.io				  apiGroup: rbac.authorization.k8s.io
+---								---
+kind: RoleBinding						kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1			apiVersion: rbac.authorization.k8s.io/v1
+metadata:							metadata:
+  name: operator-webhook-sa					  name: operator-webhook-sa
+  namespace: {{ .Release.Namespace }}				  namespace: {{ .Release.Namespace }}
+subjects:							subjects:
+- kind: ServiceAccount						- kind: ServiceAccount
+  name: operator-webhook-sa					  name: operator-webhook-sa
+roleRef:							roleRef:
+  kind: Role							  kind: Role
+  name: operator-webhook-sa					  name: operator-webhook-sa
+  apiGroup: rbac.authorization.k8s.io				  apiGroup: rbac.authorization.k8s.io
+diff -ry old/sriov/templates/role.yaml new/sriov-network-operator/templates/role.yaml
+apiVersion: rbac.authorization.k8s.io/v1			apiVersion: rbac.authorization.k8s.io/v1
+kind: Role							kind: Role
+metadata:							metadata:
+  creationTimestamp: null					  creationTimestamp: null
+  name: {{ include "sriov-network-operator.fullname" . }}	  name: {{ include "sriov-network-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}				  namespace: {{ .Release.Namespace }}
+  labels:							  labels:
+  {{- include "sriov-network-operator.labels" . | nindent 4 }	  {{- include "sriov-network-operator.labels" . | nindent 4 }
+rules:								rules:
+  - apiGroups:							  - apiGroups:
+      - ""							      - ""
+    resources:							    resources:
+      - pods							      - pods
+      - services						      - services
+      - endpoints						      - endpoints
+      - persistentvolumeclaims					      - persistentvolumeclaims
+      - events							      - events
+      - configmaps						      - configmaps
+      - secrets							      - secrets
+    verbs:							    verbs:
+      - '*'							      - '*'
+  - apiGroups:							  - apiGroups:
+      - apps							      - apps
+    resources:							    resources:
+      - deployments						      - deployments
+      - daemonsets						      - daemonsets
+      - replicasets						      - replicasets
+      - statefulsets						      - statefulsets
+    verbs:							    verbs:
+      - '*'							      - '*'
+  - apiGroups:							  - apiGroups:
+      - monitoring.coreos.com					      - monitoring.coreos.com
+    resources:							    resources:
+      - servicemonitors						      - servicemonitors
+    verbs:							    verbs:
+      - get							      - get
+      - create							      - create
+  - apiGroups:							  - apiGroups:
+      - apps							      - apps
+    resourceNames:						    resourceNames:
+      - sriov-network-operator					      - sriov-network-operator
+    resources:							    resources:
+      - deployments/finalizers					      - deployments/finalizers
+    verbs:							    verbs:
+      - update							      - update
+  - apiGroups:							  - apiGroups:
+      - rbac.authorization.k8s.io				      - rbac.authorization.k8s.io
+    resources:							    resources:
+      - serviceaccounts						      - serviceaccounts
+      - roles							      - roles
+      - rolebindings						      - rolebindings
+    verbs:							    verbs:
+      - '*'							      - '*'
+  - apiGroups:							  - apiGroups:
+      - config.openshift.io					      - config.openshift.io
+    resources:							    resources:
+      - infrastructures						      - infrastructures
+    verbs:							    verbs:
+      - get							      - get
+      - list							      - list
+      - watch							      - watch
+---								---
+apiVersion: rbac.authorization.k8s.io/v1			apiVersion: rbac.authorization.k8s.io/v1
+kind: Role							kind: Role
+metadata:							metadata:
+  name: sriov-network-config-daemon				  name: sriov-network-config-daemon
+  namespace: {{ .Release.Namespace }}				  namespace: {{ .Release.Namespace }}
+  labels:							  labels:
+  {{- include "sriov-network-operator.labels" . | nindent 4 }	  {{- include "sriov-network-operator.labels" . | nindent 4 }
+rules:								rules:
+  - apiGroups:							  - apiGroups:
+      - ""							      - ""
+    resources:							    resources:
+      - pods							      - pods
+    verbs:							    verbs:
+      - '*'							      - '*'
+  - apiGroups:							  - apiGroups:
+      - apps							      - apps
+    resources:							    resources:
+      - daemonsets						      - daemonsets
+    verbs:							    verbs:
+      - '*'							      - '*'
+  - apiGroups:							  - apiGroups:
+      - sriovnetwork.openshift.io				      - sriovnetwork.openshift.io
+    resources:							    resources:
+      - '*'							      - '*'
+      - sriovnetworknodestates					      - sriovnetworknodestates
+    verbs:							    verbs:
+      - '*'							      - '*'
+  - apiGroups:							  - apiGroups:
+      - security.openshift.io					      - security.openshift.io
+    resourceNames:						    resourceNames:
+      - privileged						      - privileged
+    resources:							    resources:
+      - securitycontextconstraints				      - securitycontextconstraints
+    verbs:							    verbs:
+      - use							      - use
+  - apiGroups:							  - apiGroups:
+      - ""							      - ""
+    resources:							    resources:
+      - configmaps						      - configmaps
+    verbs:							    verbs:
+      - get							      - get
+      - update							      - update
+  - apiGroups:							  - apiGroups:
+      - 'coordination.k8s.io'					      - 'coordination.k8s.io'
+    resources:							    resources:
+      - 'leases'						      - 'leases'
+    verbs:							    verbs:
+      - '*'							      - '*'
+							      >	  - apiGroups:
+							      >	      - ""
+							      >	    resources:
+							      >	      - events
+							      >	    verbs:
+							      >	      - create
+							      >	      - patch
+---								---
+apiVersion: rbac.authorization.k8s.io/v1			apiVersion: rbac.authorization.k8s.io/v1
+kind: Role							kind: Role
+metadata:							metadata:
+  name: operator-webhook-sa					  name: operator-webhook-sa
+  namespace: {{ .Release.Namespace }}				  namespace: {{ .Release.Namespace }}
+  labels:							  labels:
+  {{- include "sriov-network-operator.labels" . | nindent 4 }	  {{- include "sriov-network-operator.labels" . | nindent 4 }
+rules:								rules:
+  - apiGroups:							  - apiGroups:
+      - ""							      - ""
+    resources:							    resources:
+      - configmaps						      - configmaps
+    verbs:							    verbs:
+      - get							      - get
+diff -ry old/sriov/templates/secrets.yaml new/sriov-network-operator/templates/secrets.yaml
+{{- if not .Values.cert_manager -}}				{{- if not .Values.cert_manager -}}
+{{- if .Values.operator.enableAdmissionController }}		{{- if .Values.operator.enableAdmissionController }}
+apiVersion: v1							apiVersion: v1
+kind: Secret							kind: Secret
+metadata:							metadata:
+  name: operator-webhook-service				  name: operator-webhook-service
+  namespace: {{ .Release.Namespace }}				  namespace: {{ .Release.Namespace }}
+data: {{ include "sriov_operator_cert" . | nindent 2 }}		data: {{ include "sriov_operator_cert" . | nindent 2 }}
+{{- end }}							{{- end }}
+---								---
+{{- if .Values.operator.enableAdmissionController }}		{{- if .Values.operator.enableAdmissionController }}
+apiVersion: v1							apiVersion: v1
+kind: Secret							kind: Secret
+metadata:							metadata:
+  name: network-resources-injector-secret			  name: network-resources-injector-secret
+  namespace: {{ .Release.Namespace }}				  namespace: {{ .Release.Namespace }}
+data: {{ include "sriov_resource_injector_cert" . | nindent 2	data: {{ include "sriov_resource_injector_cert" . | nindent 2
+{{- end }}							{{- end }}
+{{- end }}							{{- end }}
+
+diff -ry old/sriov/templates/serviceaccount.yaml new/sriov-network-operator/templates/serviceaccount.yaml
+apiVersion: v1							apiVersion: v1
+kind: ServiceAccount						kind: ServiceAccount
+metadata:							metadata:
+  name: {{ include "sriov-network-operator.fullname" . }}	  name: {{ include "sriov-network-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}				  namespace: {{ .Release.Namespace }}
+  labels:							  labels:
+  {{- include "sriov-network-operator.labels" . | nindent 4 }	  {{- include "sriov-network-operator.labels" . | nindent 4 }
+---								---
+apiVersion: v1							apiVersion: v1
+kind: ServiceAccount						kind: ServiceAccount
+metadata:							metadata:
+  name: sriov-network-config-daemon				  name: sriov-network-config-daemon
+  namespace: {{ .Release.Namespace }}				  namespace: {{ .Release.Namespace }}
+  labels:							  labels:
+  {{- include "sriov-network-operator.labels" . | nindent 4 }	  {{- include "sriov-network-operator.labels" . | nindent 4 }
+Only in new/sriov-network-operator/templates: sriovoperatorconfig.yaml
+diff -ry old/sriov/templates/validate-install-crd.yaml new/sriov-network-operator/templates/validate-install-crd.yaml
+#{{- if gt (len (lookup "rbac.authorization.k8s.io/v1" "Clust	#{{- if gt (len (lookup "rbac.authorization.k8s.io/v1" "Clust
+# {{- $found := dict -}}					# {{- $found := dict -}}
+# {{- set $found "sriovnetwork.openshift.io/v1/SriovIBNetwork	# {{- set $found "sriovnetwork.openshift.io/v1/SriovIBNetwork
+# {{- set $found "sriovnetwork.openshift.io/v1/SriovNetworkNo	# {{- set $found "sriovnetwork.openshift.io/v1/SriovNetworkNo
+# {{- set $found "sriovnetwork.openshift.io/v1/SriovNetworkNo	# {{- set $found "sriovnetwork.openshift.io/v1/SriovNetworkNo
+# {{- set $found "sriovnetwork.openshift.io/v1/SriovNetworkPo	# {{- set $found "sriovnetwork.openshift.io/v1/SriovNetworkPo
+# {{- set $found "sriovnetwork.openshift.io/v1/SriovNetwork" 	# {{- set $found "sriovnetwork.openshift.io/v1/SriovNetwork" 
+# {{- set $found "sriovnetwork.openshift.io/v1/SriovOperatorC	# {{- set $found "sriovnetwork.openshift.io/v1/SriovOperatorC
+# {{- range .Capabilities.APIVersions -}}			# {{- range .Capabilities.APIVersions -}}
+# {{- if hasKey $found (toString .) -}}				# {{- if hasKey $found (toString .) -}}
+# 	{{- set $found (toString .) true -}}			# 	{{- set $found (toString .) true -}}
+# {{- end -}}							# {{- end -}}
+# {{- end -}}							# {{- end -}}
+# {{- range $_, $exists := $found -}}				# {{- range $_, $exists := $found -}}
+# {{- if (eq $exists false) -}}					# {{- if (eq $exists false) -}}
+# 	{{- required "Required CRDs are missing. Please insta	# 	{{- required "Required CRDs are missing. Please insta
+# {{- end -}}							# {{- end -}}
+# {{- end -}}							# {{- end -}}
+#{{- end -}}							#{{- end -}}diff -ry old/sriov/templates/_webhook-certs.tpl new/sriov-network-operator/templates/_webhook-certs.tpl
+{{/*								{{/*
+Generate TLS certificates for webhooks.				Generate TLS certificates for webhooks.
+Note: these 2 lines, that are repeated several times below, a	Note: these 2 lines, that are repeated several times below, a
+ensure the CA certs are generated only once:			ensure the CA certs are generated only once:
+    $ca := .ca | default (genCA "sriov-network-operator.k8s.c	    $ca := .ca | default (genCA "sriov-network-operator.k8s.c
+    $_ := set . "ca" $ca					    $_ := set . "ca" $ca
+Please, don't try to "simplify" them as without this trick, e	Please, don't try to "simplify" them as without this trick, e
+certificate would be signed by a different CA.			certificate would be signed by a different CA.
+*/}}								*/}}
+{{- define "sriov_operator_ca_cert" }}				{{- define "sriov_operator_ca_cert" }}
+{{- $ca := .ca | default (genCA "sriov-network-operator.k8s.c	{{- $ca := .ca | default (genCA "sriov-network-operator.k8s.c
+{{- $_ := set . "ca" $ca -}}					{{- $_ := set . "ca" $ca -}}
+{{- printf "%s" $ca.Cert | b64enc -}}				{{- printf "%s" $ca.Cert | b64enc -}}
+{{- end }}							{{- end }}
+{{- define "sriov_operator_cert" }}				{{- define "sriov_operator_cert" }}
+{{- $ca := .ca | default (genCA "sriov-network-operator.k8s.c	{{- $ca := .ca | default (genCA "sriov-network-operator.k8s.c
+{{- $_ := set . "ca" $ca -}}					{{- $_ := set . "ca" $ca -}}
+{{- $cn := printf "operator-webhook-service.%s.svc" .Release.	{{- $cn := printf "operator-webhook-service.%s.svc" .Release.
+{{- $cert := genSignedCert $cn nil (list $cn) 365 $ca -}}	{{- $cert := genSignedCert $cn nil (list $cn) 365 $ca -}}
+tls.crt: {{ $cert.Cert | b64enc }}				tls.crt: {{ $cert.Cert | b64enc }}
+tls.key: {{ $cert.Key | b64enc }}				tls.key: {{ $cert.Key | b64enc }}
+{{- end }}							{{- end }}
+{{- define "sriov_resource_injector_cert" }}			{{- define "sriov_resource_injector_cert" }}
+{{- $ca := .ca | default (genCA "sriov-network-operator.k8s.c	{{- $ca := .ca | default (genCA "sriov-network-operator.k8s.c
+{{- $_ := set . "ca" $ca -}}					{{- $_ := set . "ca" $ca -}}
+{{- $cn := printf "network-resources-injector-service.%s.svc"	{{- $cn := printf "network-resources-injector-service.%s.svc"
+{{- $cert := genSignedCert $cn nil (list $cn) 365 $ca -}}	{{- $cert := genSignedCert $cn nil (list $cn) 365 $ca -}}
+tls.crt: {{ $cert.Cert | b64enc }}				tls.crt: {{ $cert.Cert | b64enc }}
+tls.key: {{ $cert.Key | b64enc }}				tls.key: {{ $cert.Key | b64enc }}
+{{- end }}							{{- end }}
+
+diff -ry old/sriov/values.yaml new/sriov-network-operator/values.yaml
+operator:							operator:
+  tolerations:							  tolerations:
+							      >	    - key: "node-role.kubernetes.io/master"
+							      >	      operator: "Exists"
+							      >	      effect: "NoSchedule"
+    - key: "node-role.kubernetes.io/control-plane"		    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"					      operator: "Exists"
+      effect: "NoSchedule"					      effect: "NoSchedule"
+    - effect: NoExecute						    - effect: NoExecute
+      key: node-role.kubernetes.io/etcd				      key: node-role.kubernetes.io/etcd
+      operator: Exists						      operator: Exists
+  nodeSelector: {}						  nodeSelector: {}
+  affinity:							  affinity:
+    nodeAffinity:						    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:	      |	      preferredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:				      |	        - weight: 1
+          - matchExpressions:				      |	          preference:
+            - key: "node-role.kubernetes.io/master"	      |	            matchExpressions:
+              operator: In				      |	              - key: "node-role.kubernetes.io/master"
+              values: [ "" ]				      |	                operator: In
+          - matchExpressions:				      |	                values: [""]
+							      >	        - weight: 1
+							      >	          preference:
+							      >	            matchExpressions:
+              - key: "node-role.kubernetes.io/control-plane"	              - key: "node-role.kubernetes.io/control-plane"
+                operator: In					                operator: In
+                values: [ "" ]					                values: [ "" ]
+  nameOverride: ""						  nameOverride: ""
+  fullnameOverride: ""						  fullnameOverride: ""
+  resourcePrefix: "rancher.io"					  resourcePrefix: "rancher.io"
+  enableAdmissionController: false			      <
+  cniBinPath: "/opt/cni/bin"					  cniBinPath: "/opt/cni/bin"
+  clusterType: "kubernetes"					  clusterType: "kubernetes"
+							      >	  admissionControllers:
+							      >	    enabled: false
+							      >	    certificates:
+							      >	      secretNames:
+							      >	        operator: "operator-webhook-cert"
+							      >	        injector: "network-resources-injector-cert"
+							      >	      certManager:
+							      >	        # When enabled, makes use of certificates managed by 
+							      >	        enabled: false
+							      >	        # When enabled, certificates are generated via cert-m
+							      >	        # defined above
+							      >	        generateSelfSigned: false
+							      >	      # If not specified, no secret is created and secrets wi
+							      >	      # cluster. In that case, the ca.crt must be base64 enco
+							      >	      custom:
+							      >	        enabled: false
+							      >	    #   operator:
+							      >	    #     caCrt: |
+							      >	    #       -----BEGIN CERTIFICATE-----
+							      >	    #       MIIMIICLDCCAdKgAwIBAgIBADAKBggqhkjOPQQDAjB9MQswCQ
+							      >	    #       ...
+							      >	    #       -----END CERTIFICATE-----
+							      >	    #     tlsCrt: |
+							      >	    #       -----BEGIN CERTIFICATE-----
+							      >	    #       MIIMIICLDCCAdKgAwIBAgIBADAKBggqhkjOPQQDAjB9MQswCQ
+							      >	    #       ...
+							      >	    #       -----END CERTIFICATE-----
+							      >	    #     tlsKey: |
+							      >	    #       -----BEGIN EC PRIVATE KEY-----
+							      >	    #       MHcl4wOuDwKQa+upc8GftXE2C//4mKANBC6It01gUaTIpo=
+							      >	    #       ...
+							      >	    #      -----END EC PRIVATE KEY-----
+							      >	    #   injector:
+							      >	    #     caCrt: |
+							      >	    #       -----BEGIN CERTIFICATE-----
+							      >	    #       MIIMIICLDCCAdKgAwIBAgIBADAKBggqhkjOPQQDAjB9MQswCQ
+							      >	    #       ...
+							      >	    #       -----END CERTIFICATE-----
+							      >	    #     tlsCrt: |
+							      >	    #       -----BEGIN CERTIFICATE-----
+							      >	    #       MIIMIICLDCCAdKgAwIBAgIBADAKBggqhkjOPQQDAjB9MQswCQ
+							      >	    #       ...
+							      >	    #       -----END CERTIFICATE-----
+							      >	    #     tlsKey: |
+							      >	    #       -----BEGIN EC PRIVATE KEY-----
+							      >	    #       MHcl4wOuDwKQa+upc8GftXE2C//4mKANBC6It01gUaTIpo=
+							      >	    #       ...
+							      >	    #      -----END EC PRIVATE KEY-----
+							      >
+							      >	sriovOperatorConfig:
+							      >	  # deploy sriovOperatorConfig CR with the below values
+							      >	  deploy: true
+							      >	  # node slectors for sriov-network-config-daemon
+							      >	  configDaemonNodeSelector: {feature.node.kubernetes.io/netwo
+							      >	  # log level for both operator and sriov-network-config-daem
+							      >	  logLevel: 2
+							      >	  # disable node draining when configuring SR-IOV, set to tru
+							      >	  # cluster or any other justifiable reason
+							      >	  disableDrain: false
+							      >	  # sriov-network-config-daemon configuration mode. either "d
+							      >	  configurationMode: daemon
+
+# Image URIs for sriov-network-operator components		# Image URIs for sriov-network-operator components
+images:								images:
+  operator:							  operator:
+    repository: rancher/hardened-sriov-network-operator		    repository: rancher/hardened-sriov-network-operator
+    tag: v1.2.0-build20230912				      |	    tag: v1.2.0-build20240325
+  sriovConfigDaemon:						  sriovConfigDaemon:
+    repository: rancher/hardened-sriov-network-config-daemon	    repository: rancher/hardened-sriov-network-config-daemon
+    tag: v1.2.0-build20230912				      |	    tag: v1.2.0-build20240325
+  sriovCni:							  sriovCni:
+    repository: rancher/hardened-sriov-cni			    repository: rancher/hardened-sriov-cni
+    tag: v2.6.3-build20230913				      |	    tag: v2.7.0-build20240325
+  ibSriovCni: 							  ibSriovCni: 
+    repository: rancher/hardened-ib-sriov-cni			    repository: rancher/hardened-ib-sriov-cni
+    tag: v1.0.2-build20230911				      |	    tag: v1.0.3-build20240325
+  sriovDevicePlugin: 						  sriovDevicePlugin: 
+    repository: rancher/hardened-sriov-network-device-plugin	    repository: rancher/hardened-sriov-network-device-plugin
+    tag: v3.5.1-build20230911				      |	    tag: v3.6.2-build20240325
+  resourcesInjector: 						  resourcesInjector: 
+    repository: rancher/hardened-sriov-network-resources-inje	    repository: rancher/hardened-sriov-network-resources-inje
+    tag: v1.5-build20230911				      |	    tag: v1.5-build20240325
+  webhook:							  webhook:
+    repository: rancher/hardened-sriov-network-webhook		    repository: rancher/hardened-sriov-network-webhook
+    tag: v1.2.0-build20230912				      |	    tag: v1.2.0-build20240325
+
+# cert_manager enables integration with cert-manager to gener |	imagePullSecrets: []
+# certificates for the operator webhooks. Otherwise the chart <
+# generate ad-hoc certificates with no automated renewal at e <
+# not recommended for production clusters.		      <
+cert_manager: false					      <
+
+global:								global:
+  cattle:							  cattle:
+    systemDefaultRegistry: ""					    systemDefaultRegistry: ""
+  rbac:								  rbac:
+    userRoles:							    userRoles:
+      aggregateToDefaultRoles: false				      aggregateToDefaultRoles: false

@@ -1,0 +1,22 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: test-network-policy
+  namespace: default
+spec:
+  endpointSelector:
+    matchLabels:
+      app: podA
+  ingress:
+  - fromEndpoints:
+    - matchLabels:
+          app: podC
+    toPorts:
+    - ports:
+      - protocol: TCP
+        port: 80
+  - fromEndpoints:
+    - matchLabels:
+          k8s:io.kubernetes.pod.namespace: ns2
+          app: podB
+

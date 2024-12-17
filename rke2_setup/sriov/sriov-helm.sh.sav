@@ -1,0 +1,21 @@
+#!/bin/bash -xv
+set -Eeuo pipefail
+
+#REPO_NAME="rancher-charts"
+#REPO_URL="https://raw.githubusercontent.com/rancher/charts/dev-v2.8/"
+#REPO_NAME="suse-edge-mbuil"
+#REPO_URL="https://raw.githubusercontent.com/manuelbuil/edgecharts/updateSRIOVImages/"
+
+REPO_NAME="rancher-charts"
+REPO_URL="https://raw.githubusercontent.com/rancher/charts/dev-v2.9/"
+
+
+helm repo add ${REPO_NAME} ${REPO_URL} 
+helm repo update
+helm install -n kube-system sriov-crd ${REPO_NAME}/sriov-crd
+helm install -n kube-system sriov ${REPO_NAME}/sriov
+#helm install -n kube-system sriov ${REPO_NAME}/sriov-network-operator
+
+
+#helm repo add rancher-stable https://releases.rancher.com/server-charts/stable
+

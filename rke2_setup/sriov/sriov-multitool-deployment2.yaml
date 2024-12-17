@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: network-multitool
+  name: network-multitool
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: network-multitool
+  template:
+    metadata:
+      labels:
+        app: network-multitool
+      annotations:
+        k8s.v1.cni.cncf.io/networks: kube-system/example-network
+    spec:
+      containers:
+      - name: network-multitool
+        image: wbitt/network-multitool:extra
+        imagePullPolicy: Always
+        securityContext:
+          runAsUser: 0
+          capabilities:
+            add: ["NET_ADMIN","NET_RAW"]
+        resources:
+          limits:
+            rancher.io/sriovmako:  1
+          requests:
+            rancher.io/sriovmako:  1
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: network-multitool
+            topologyKey: kubernetes.io/hostname

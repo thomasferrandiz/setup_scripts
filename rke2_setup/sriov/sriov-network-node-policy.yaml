@@ -1,0 +1,17 @@
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetworkNodePolicy
+metadata:
+  name: sriov-mako 
+  namespace: kube-system
+spec:
+  nodeSelector:
+    feature.node.kubernetes.io/network-sriov.capable: "true"
+  resourceName: sriovmako
+  mtu: 1500
+  numVfs: 8
+  nicSelector:
+    deviceID: "1013"
+    vendor: "15b3"
+    rootDevices:
+    - 0000:81:00.0
+  deviceType: netdevice

@@ -1,0 +1,30 @@
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: multus
+  namespace: kube-system
+spec:
+  repo: https://rke2-charts.rancher.io
+  chart: rke2-multus
+  bootstrap: true
+  version: 4.1.1
+  targetNamespace: kube-system
+  valuesContent: |-
+    config:
+      cni_conf:
+        multusConfFile: /tmp/multus-conf/00-multus.conf.template
+        cniVersion: 0.3.1
+        name: multus-cni-network
+        type: multus
+        confDir: /var/lib/rancher/k3s/agent/etc/cni/net.d
+        binDir: /var/lib/rancher/k3s/data/current/bin/
+        kubeconfig: /var/lib/rancher/k3s/agent/etc/cni/net.d/multus.d/multus.kubeconfig
+        delegates:
+          - type: cilium-cni
+            name: cilium
+            cniVersion: 0.3.1
+            delegate:
+              isDefaultGateway: true
+    manifests:
+      dhcpDaemonSet: true
+      configMap: true

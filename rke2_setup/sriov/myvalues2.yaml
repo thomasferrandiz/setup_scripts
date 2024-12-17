@@ -1,0 +1,22 @@
+images:
+  operator:
+    repository: rancher/hardened-sriov-network-operator
+    tag: v1.2.0-build20240325
+  sriovConfigDaemon:
+    repository: rancher/hardened-sriov-network-config-daemon
+    tag: v1.2.0-build20240325
+  sriovCni:
+    repository: rancher/hardened-sriov-cni
+    tag: v2.7.0-build20240325
+  ibSriovCni:
+    repository: rancher/hardened-ib-sriov-cni
+    tag: v1.0.3-build20240325
+  sriovDevicePlugin:
+    repository: rancher/hardened-sriov-network-device-plugin
+    tag: v3.6.2-build20240325
+  resourcesInjector:
+    repository: rancher/hardened-sriov-network-resources-injector
+    tag: v1.5-build20240325
+  webhook:
+    repository: rancher/hardened-sriov-network-webhook
+    tag: v1.2.0-build20240325

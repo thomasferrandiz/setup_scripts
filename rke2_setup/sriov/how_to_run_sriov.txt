@@ -1,0 +1,423 @@
+### HOW TO RUN SR-IOV ##
+
+## Requirements ##
+
+* Two physical hosts
+* Hosts that have NICs which support SR-IOV (e.g. check cat /sys/class/net/eth5/device/sriov_totalvfs for eth5)
+* The host must activate the IOMMU virtualization. For intel cpus: Add 'iommu=pt intel_iommu=on' in GRUB_CMDLINE_LINUX
+
+## RKE2 Config ##
+
+write-kubeconfig-mode: 644
+token: "secret"
+cni: multus,canal
+
+### whereabouts
+Whereabouts is a small CNI that manages the allocation of unique IP addresses on multiple nodes.
+It is similar to host-local but works across nodes.
+If you want to use it with Multus, before starting rke2, create the file /var/lib/rancher/rke2/server/manifests/rke2-multus-config.yml with content:
+
+
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: rke2-multus
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    rke2-whereabouts:
+      enabled: true
+
+## My env ##
+2 physical hosts (workers)
+1 VM (running in one of the hosts and acting as master)
+
+
+# Installed rke2 in master:
+curl -sfL https://get.rke2.io | sudo INSTALL_RKE2_VERSION=v1.21.1-rc3%2Brke2r1 sh -
+
+# Installed rke2 in agent:
+curl -sfL https://get.rke2.io | sudo INSTALL_RKE2_VERSION=v1.21.1-rc3%2Brke2r1 INSTALL_RKE2_TYPE="agent" sh -
+
+# Label the node in rancher-charts/sriov chart version < v0.13.2 to specify what node is sriov capable (fulfills the above requirements) through a label
+# NOTE this is not required for version => rancher-charts/sriov v0.13.2. 
+# Earlier versions need node to be labeled as nfd is unable to detect sriov capabilities in the NIC so the sriov controller thinks that there a no sriov capable nodes
+
+# kubectl label node $node_name feature.node.kubernetes.io/network-sriov.capable=true
+
+# Install the sriov charts. Normally via Rancher GUI but it's possible with CLI (not recommended)
+helm repo add rancher-charts https://raw.githubusercontent.com/rancher/charts/dev-v2.6/
+helm install sriov-crd rancher-charts/sriov-crd
+kubectl get crd | grep openshift
+
+# Output should be:
+sriovibnetworks.sriovnetwork.openshift.io            2022-04-22T09:37:55Z
+sriovnetworknodepolicies.sriovnetwork.openshift.io   2022-04-22T09:37:55Z
+sriovnetworknodestates.sriovnetwork.openshift.io     2022-04-22T09:37:55Z
+sriovnetworkpoolconfigs.sriovnetwork.openshift.io    2022-04-22T09:37:55Z
+sriovnetworks.sriovnetwork.openshift.io              2022-04-22T09:37:55Z
+sriovoperatorconfigs.sriovnetwork.openshift.io       2022-04-22T09:37:55Z
+
+# Install the sriov chart
+helm install sriov rancher-charts/sriov -n kube-system
+
+# The result is a deployment, in namespace kube-system, called sriov and a daemonset called sriov-network-config-daemon running in all nodes with the label. The daemonset pod has 3 containers: sriov-cni, sriov-infiniband-cni, sriov-network-config-daemon
+
+# Check that your NIC is supported
+Sriov-operator now ships with a whitelist of officially supported  NICs. This list is stored in the configmap supported-nic-ids.
+The format is:
+Name: <vendor_id> <pf_id> <vf_id>
+
+These values can be determined with the following command on a worker node:
+lspci -nn -vvv | grep Ethernet
+The result will look like this:
+03:00.0 Ethernet controller [0200]: Intel Corporation I350 Gigabit Network Connection [8086:1521] (rev 01)
+Where: 8086 is the vendor id and 1521 is the pf_id.
+
+To determine the vf_id, you first need to create a vf associated to the Nic. This can be done in this way:
+echo 1 > /sys/class/net/<device_name>/device/sriov_numvfs 
+Then the interface will appear in the lspci command:
+lspci -nn -vvv | grep Ethernet
+03:00.1 Ethernet controller [0200]: Intel Corporation I350 Gigabit Network Connection [8086:1521] (rev 01)
+03:10.1 Ethernet controller [0200]: Intel Corporation I350 Ethernet Controller Virtual Function [8086:1520] (rev 01)
+
+In this example, the vf_id is 1520.
+
+Don't forget to remove the vf before continuing:
+echo 0 > /sys/class/net/<device_name>/device/sriov_numvfs 
+
+Once the configmap is updated, restart all the sriov-network-config-daemon pods.
+For more details, see https://github.com/k8snetworkplumbingwg/sriov-network-operator/blob/master/doc/supported-hardware.md
+
+
+# Let's configure a SriovNetworkPolicy which will create the VFs in the sriov NIC we select. First, we must identify the deviceID, vendor and rootDevice parameter of the NIC which we would like to use. There are two ways to do this:
+# 1 - Using lshw -C Network and lspci -nk | grep xxxx, where xxxx is the bus info fetched from the output of lshw
+# 2 - Using the crd sriovnetworknodestates.sriovnetwork.openshift.io, that contains the information
+# Let's use 2 since it is easier. We must wait a couple of minutes until these resources are ready
+
+kubectl get sriovnetworknodestates.sriovnetwork.openshift.io -A
+
+# The previous command will show the nodes where sriov-network-config-daemon was created. In my case, one is called agabus:
+
+k get sriovnetworknodestates.sriovnetwork.openshift.io agabus -o yaml
+
+# That will list the interfaces with the deviceID, driver, max number of vfs, etc. For example:
+
+  - deviceID: "1572"
+    driver: i40e
+    linkSpeed: 10000 Mb/s
+    linkType: ETH
+    mac: 3c:fd:fe:a4:9c:42
+    mtu: 1500
+    name: eth4
+    pciAddress: 0000:81:00.2
+    totalvfs: 32
+    vendor: "8086"
+
+# If I want to create 4 VFs in my node "agabus", this should be the manifest:
+
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetworkNodePolicy
+metadata:
+  name: policy-1
+  namespace: kube-system
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: agabus
+  resourceName: intelnics
+  mtu: 1500
+  numVfs: 4
+  nicSelector:
+    deviceID: "1572"
+    vendor: "8086"
+    rootDevices:
+    - 0000:81:00.2
+  deviceType: netdevice
+
+# The resourceName just specified the name of the resource that will be created. deviceType must be netdevice because we don't support any other as of now
+# IMPORTANT! The namespace of the manifest must be the same where sriov-network-config-daemon and the sriov deployment are running
+# The result of applying that manifest should be:
+# 1 - One pod running in the node. In my case:
+
+kube-system   sriov-device-plugin-8kmwq                    1/1     Running     0          96s     10.161.72.11   agabus   <none>           <none>
+
+# 2 - VFs created in the selected interface:
+
+agabus@agabus:~> ip link show eth4
+6: eth4: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP mode DEFAULT group default qlen 1000
+    link/ether 3c:fd:fe:a4:9c:42 brd ff:ff:ff:ff:ff:ff
+    vf 0     link/ether aa:a4:ac:47:69:4a brd ff:ff:ff:ff:ff:ff, spoof checking on, link-state auto, trust off
+    vf 1     link/ether 9a:a8:8a:2c:5e:4a brd ff:ff:ff:ff:ff:ff, spoof checking on, link-state auto, trust off
+    vf 2     link/ether 3e:d2:d9:b3:45:2c brd ff:ff:ff:ff:ff:ff, spoof checking on, link-state auto, trust off
+    vf 3     link/ether 4e:b5:c8:82:04:f9 brd ff:ff:ff:ff:ff:ff, spoof checking on, link-state auto, trust off
+
+# 3 - The node should have now a new allocatable resource called rancher.io/intelnics. In my case:
+
+kubectl get node agabus -o jsonpath='{.status.allocatable}' | jq
+{
+  "cpu": "40",
+  "ephemeral-storage": "370555461956",
+  "hugepages-1Gi": "0",
+  "hugepages-2Mi": "4Gi",
+  "memory": "127720316Ki",
+  "pods": "110",
+  "rancher.io/intelnics": "4"
+}
+
+# Now it is time to create the network that includes the previous resources. This will end up creating a net-attach resource for multus. For example:
+
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetwork
+metadata:
+  name: example-network
+  namespace: kube-system
+spec:
+  ipam: |
+    {
+      "type": "host-local",
+      "subnet": "192.168.0.0/24",
+      "rangeStart": "192.168.0.10",
+      "rangeEnd": "192.168.0.60",
+      "routes": [{
+        "dst": "0.0.0.0/0"
+      }],
+      "gateway": "192.168.0.1"
+    }
+  vlan: 0 
+  resourceName: intelnics
+
+
+To use, whereabouts instead of host-local, use instead:
+
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetwork
+metadata:
+  name: example-network
+  namespace: kube-system
+spec:
+  ipam: |
+    {
+      "type": "whereabouts",
+      "range": "192.168.0.0/24"
+    }
+  vlan: 0 
+  resourceName: intelnics
+
+# Again, the namespace must be the same as the previous ones. If it worked, we should see:
+
+kubectl get network-attachment-definitions.k8s.cni.cncf.io -A
+NAMESPACE     NAME              AGE
+kube-system   example-network   11s
+
+# We are ready to create a pod that consumes all what we have created so far. I do this with a deployment:
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: multitool
+  name: multitool-deployment
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: multitool
+  template:
+    metadata:
+      labels:
+        app: multitool
+      annotations:
+        k8s.v1.cni.cncf.io/networks: kube-system/example-network
+    spec:
+      containers:
+      - image: praqma/network-multitool
+        imagePullPolicy: Always
+        name: multitool
+        securityContext:
+          capabilities:
+            add: ["NET_ADMIN","NET_RAW"]
+        resources:
+          limits:
+            rancher.io/intelnics:  1
+          requests:
+            rancher.io/intelnics:  1
+
+# The pods can run in whatever namespace. We must refer to the namespace where the sriov resources were created by $namespace/$network, e.g. in this case "kube-system/example-network"
+
+# The result should be pods with 2 ips. The second one matching the IPAM we defined when creating the SriovNetwork resource:
+
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+    inet6 ::1/128 scope host 
+       valid_lft forever preferred_lft forever
+3: eth0@if241: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1450 qdisc noqueue state UP group default 
+    link/ether 3e:64:8e:21:b0:17 brd ff:ff:ff:ff:ff:ff link-netnsid 0
+    inet 10.42.1.3/32 scope global eth0
+       valid_lft forever preferred_lft forever
+    inet6 fe80::3c64:8eff:fe21:b017/64 scope link 
+       valid_lft forever preferred_lft forever
+237: net1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP group default qlen 1000
+    link/ether 9a:a8:8a:2c:5e:4a brd ff:ff:ff:ff:ff:ff
+    inet 192.168.0.10/24 brd 192.168.0.255 scope global net1
+       valid_lft forever preferred_lft forever
+    inet6 fe80::98a8:8aff:fe2c:5e4a/64 scope link 
+       valid_lft forever preferred_lft forever
+
+# It should be possible to ping between the pods using the net1 interface
+
+
+## HOW TO RUN SRIOV-DPDK ##
+
+# To be able to run DPDK, apart from enabling IOMMU virtualization, you must configure part of our memory as hugepages. To do so, there are two ways:
+
+# 1 - Add hugepages=xxx in GRUB_CMDLINE_LINUX (e.g. hugepages=2000). This will create 2000 pages of 2Mi each. This requires recreating grub and rebooting
+# 2 - echo 10000 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages. This will create 10000 pages of 2Mi each
+
+# To configure sriov-dpdk, it is very similar to plain SRIOV. The difference is that when creating the SriovNetworkNodePolicy, we sould use deviceType: vfio-pci:
+
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetworkNodePolicy
+metadata:
+  name: policy-dpdk
+  namespace: sriov-network-operator
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: agabus
+  resourceName: intelnicsDpdk
+  deviceType: vfio-pci
+  numVfs: 4
+  mtu: 1500
+  nicSelector:
+    deviceID: "1572"
+    vendor: "8086"
+    rootDevices:
+    - 0000:81:00.3
+
+
+# That will create 4 VFs of type dpdk in the selected node, in this case agabus:
+
+agabus@agabus:~> sudo dpdk-devbind --status
+
+Network devices using DPDK-compatible driver
+============================================
+0000:81:0e.0 'Ethernet Virtual Function 700 Series 154c' drv=vfio-pci unused=iavf
+0000:81:0e.1 'Ethernet Virtual Function 700 Series 154c' drv=vfio-pci unused=iavf
+0000:81:0e.2 'Ethernet Virtual Function 700 Series 154c' drv=vfio-pci unused=iavf
+0000:81:0e.3 'Ethernet Virtual Function 700 Series 154c' drv=vfio-pci unused=iavf
+
+Network devices using kernel driver
+===================================
+0000:02:00.0 'Ethernet Controller X710 for 10GbE SFP+ 1572' if=eth0 drv=i40e unused=vfio-pci *Active*
+0000:02:00.1 'Ethernet Controller X710 for 10GbE SFP+ 1572' if=eth1 drv=i40e unused=vfio-pci 
+0000:81:00.0 'Ethernet Controller X710 for 10GbE SFP+ 1572' if=eth2 drv=i40e unused=vfio-pci 
+0000:81:00.1 'Ethernet Controller X710 for 10GbE SFP+ 1572' if=eth3 drv=i40e unused=vfio-pci 
+0000:81:00.2 'Ethernet Controller X710 for 10GbE SFP+ 1572' if=eth4 drv=i40e unused=vfio-pci 
+0000:81:00.3 'Ethernet Controller X710 for 10GbE SFP+ 1572' if=eth5 drv=i40e unused=vfio-pci 
+
+# When looking at the allocated resources for the node:
+
+k get node agabus -o jsonpath='{.status.allocatable}' | jq
+{
+  "cpu": "40",
+  "ephemeral-storage": "370555461956",
+  "hugepages-1Gi": "0",
+  "hugepages-2Mi": "4Gi",
+  "memory": "127720316Ki",
+  "pods": "110",
+  "rancher.io/intelnicsDpdk": "4"
+}
+
+# Now the SriovNetwork must point to the interlnicsDpdk resource we have just created:
+
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetwork
+metadata:
+  name: example-network-dpdk
+  namespace: kube-system
+spec:
+  ipam: |
+    {
+      "type": "host-local",
+      "subnet": "192.168.0.0/24",
+      "rangeStart": "192.168.0.10",
+      "rangeEnd": "192.168.0.60",
+      "routes": [{
+        "dst": "0.0.0.0/0"
+      }],
+      "gateway": "192.168.0.1"
+    }
+  vlan: 0 
+  resourceName: intelnicsDpdk
+
+Or if using whereabouts:
+
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetwork
+metadata:
+  name: example-network-dpdk
+  namespace: kube-system
+spec:
+  ipam: |
+    {
+      "type": "whereabouts",
+      "range": "192.168.0.0/24"
+    }
+  vlan: 0 
+  resourceName: intelnicsDpdk
+
+# When creating a pod that consumes the dpdk interface three things are important (apart from the ones that were already described in plain SR-IOV):
+
+# 1 ==> Add the IPC_LOCK capability to be able to consume hugepages inside the container
+# 2 ==> Consume hugepages through a volume of type emptyDir and medium HugePages-2Mi (in our case that's the page size. It could be 1Gi with other config)
+# 3 ==> Request resources for the NIC, hugepages and memory
+
+# Example:
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: multitool
+  name: multitool-deployment
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: multitool
+  template:
+    metadata:
+      labels:
+        app: multitool
+      annotations:
+        k8s.v1.cni.cncf.io/networks: kube-system/example-network-dpdk
+    spec:
+      containers:
+      - image: praqma/network-multitool
+        imagePullPolicy: Always
+        name: multitool
+        securityContext:
+          capabilities:
+            add: ["NET_ADMIN","NET_RAW", "IPC_LOCK"]
+        volumeMounts:
+        - mountPath: /hugepages-2Mi
+          name: hugepages-2mi
+        resources:
+          limits:
+            rancher.io/intelnicsDpdk: 1
+            hugepages-2Mi: 1Gi
+            memory: 2Gi
+          requests:
+            rancher.io/intelnicsDpdk: 1
+            hugepages-2Mi: 1Gi
+            memory: 2Gi
+      volumes:
+      - name: hugepages-2mi
+        emptyDir:
+          medium: HugePages-2Mi
+
+# As the interfaces is not part of the kernel, you will not be able to see it in the pod by running the usual tools like `ip a`
+
+
+
