@@ -18,9 +18,9 @@ while getopts "h?vja" opt; do
         ;;
     v)  verbose=1
         ;;
-    j)  JOIN=$OPTARG
+    j)  JOIN=1
         ;;
-    a)  USE_AIRGAP=$OPTARG
+    a)  USE_AIRGAP=1
         ;;
 
     esac
