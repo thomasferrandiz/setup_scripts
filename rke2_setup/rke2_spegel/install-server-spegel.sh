@@ -1,12 +1,12 @@
 #!/bin/bash -xv
 set -Eeuo pipefail
 
-USE_AIRGAP=1
 
 INSTALL_RKE2_VERSION=v1.30.7+rke2r1
 # INSTALL_RKE2_VERSION="latest"
 INSTALL_RKE2_TYPE="server"
 
+USE_AIRGAP="${USE_AIRGAP:-1}"
 JOIN="${JOIN:-0}"
 
 OPTIND=1  
@@ -47,7 +47,7 @@ sudo cp $PWD/registries.yaml $FILE
 
 FILE="/etc/rancher/rke2/config.yaml"
 sudo mkdir -p $(dirname $FILE) 
-if [[ $JOIN == 0]]; then
+if [[ $JOIN == 0 ]]; then
     sudo cp $PWD/config_server.yaml $FILE
 else
     sudo cp $PWD/config_server_secondary.yaml $FILE
