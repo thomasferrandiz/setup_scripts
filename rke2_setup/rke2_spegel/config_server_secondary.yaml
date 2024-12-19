@@ -3,3 +3,4 @@ token: "secret"
 embedded-registry: true
 server: "https://10.11.0.38:9345"
 supervisor-metrics: true
+disable-default-registry-endpoint: true

@@ -1,9 +1,8 @@
 #!/bin/bash -xv
 set -Eeuo pipefail
 
-#INSTALL_RKE2_VERSION=v1.28.4+rke2r1
-#INSTALL_RKE2_VERSION=v1.29.0-rc1+rke2r1
-INSTALL_RKE2_VERSION="latest"
+INSTALL_RKE2_VERSION=v1.30.7+rke2r1
+# INSTALL_RKE2_VERSION="latest"
 INSTALL_RKE2_TYPE="server"
 
 # uninstall

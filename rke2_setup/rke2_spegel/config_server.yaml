@@ -2,3 +2,4 @@ write-kubeconfig-mode: 644
 token: "secret"
 embedded-registry: true
 supervisor-metrics: true
+disable-default-registry-endpoint: true
