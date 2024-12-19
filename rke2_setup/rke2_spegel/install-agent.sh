@@ -50,10 +50,10 @@ disable-default-registry-endpoint: true
 EOF
 sudo cp $PWD/config_agent.yaml $FILE
 
-curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE=${INSTALL_RKE2_TYPE} INSTALL_RKE2_CHANNEL=${INSTALL_RKE2_VERSION} sh -
+curl -sfL https://get.rke2.io | sudo INSTALL_RKE2_TYPE=${INSTALL_RKE2_TYPE} INSTALL_RKE2_CHANNEL=${INSTALL_RKE2_VERSION} sh -
 
-systemctl enable rke2-${INSTALL_RKE2_TYPE}.service
-systemctl start rke2-${INSTALL_RKE2_TYPE}.service
+sudo systemctl enable rke2-${INSTALL_RKE2_TYPE}.service
+sudo systemctl start rke2-${INSTALL_RKE2_TYPE}.service
 
 # journalctl -u rke2-server -f
 
