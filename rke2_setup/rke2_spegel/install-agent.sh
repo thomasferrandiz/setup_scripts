@@ -7,8 +7,35 @@ INSTALL_RKE2_TYPE="agent"
 
 RKE2_SERVER="10.11.0.38"
 
+USE_AIRGAP="${USE_AIRGAP:-0}"
+OPTIND=1  
+while getopts "h?va" opt; do
+    case "$opt" in
+    h|\?)
+        echo "Usage: $0 [-v] [-j] [-a]"
+        exit 0
+        ;;
+    v)  verbose=1
+        ;;
+    a)  USE_AIRGAP=1
+        ;;
+
+    esac
+done
+
+shift $((OPTIND-1))
+
+[ "${1:-}" = "--" ] && shift
 # uninstall
 /opt/rke2/bin/rke2-uninstall.sh || true
+
+#airgap install
+if [[ $USE_AIRGAP != 0 ]]; then
+    IMAGES_DIR=/var/lib/rancher/rke2/agent/images/
+    sudo mkdir -p ${IMAGES_DIR}
+    wget https://github.com/rancher/rke2/releases/download/${INSTALL_RKE2_VERSION}/rke2-images.linux-amd64.tar.gz
+    sudo mv ./rke2-images.linux-amd64.tar.gz ${IMAGES_DIR}
+fi
 
 FILE="/etc/rancher/rke2/registries.yaml"
 sudo mkdir -p $(dirname $FILE) 
