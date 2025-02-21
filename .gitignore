@@ -1,8 +1,8 @@
 azure/azure-credentials.txt
-aws/variables.tf
-aws/.terraform*
-aws/aws.tf
-aws/terraform*
+opentofu/aws/variables.tf
+opentofu/aws/.terraform*
+opentofu/aws/aws.tf
+opentofu/aws/terraform*
 azure/existing/.terraform*
 azure/.terraform*
 azure/azure.tf
