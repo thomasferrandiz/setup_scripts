@@ -11,7 +11,7 @@ write-kubeconfig-mode: 644
 token: "secret"
 cluster-cidr: 10.42.0.0/16,2001:cafe:42::/56
 service-cidr: 10.43.0.0/16,2001:cafe:43::/112
-cni: cilium
+cni: calico
 # curl -sfL https://get.rke2.io | sudo INSTALL_RKE2_CHANNEL="latest" sh -
 EOF
 
@@ -26,6 +26,11 @@ systemctl enable --now rke2-server
 echo "export KUBECONFIG=/etc/rancher/rke2/rke2.yaml" >> /home/${user}/.profile
 echo "export PATH=$PATH:/var/lib/rancher/rke2/bin/" >> /home/${user}/.profile
 echo "alias k=kubectl" >> /home/${user}/.profile
+
+#Add k9s
+https://github.com/derailed/k9s/releases/download/v0.40.5/k9s_linux_amd64.deb
+sudo dpkg -i ./k9s_linux_amd64.deb
+rm k9s_linux_amd64.deb
 
 # Add the typical manifests
 wget https://raw.githubusercontent.com/manuelbuil/PoCs/main/2023/windows-deployment.yml

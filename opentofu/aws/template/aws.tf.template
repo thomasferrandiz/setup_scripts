@@ -12,6 +12,7 @@ provider "aws" {
     region = var.regiondefault
     access_key = var.access_key
     secret_key = var.secret_key
+    token = var.token
 }
 
 // the netwok where instances will connect
@@ -23,7 +24,7 @@ resource "aws_vpc" "vpc" {
     enable_dns_hostnames = true
 
     tags = {
-        Name = "rke2-k3s-networking"
+        Name = "tfz-test"
     }
 }
 
@@ -32,7 +33,7 @@ resource "aws_internet_gateway" "gw" {
   vpc_id = aws_vpc.vpc.id
 
   tags = {
-    Name = "mbuil-igw"
+    Name = "tfz-igw"
   }
 }
 
@@ -52,7 +53,7 @@ resource "aws_default_route_table" "myRouter" {
   }
 
   tags = {
-    Name = "mbuil-default-route"
+    Name = "tfz-default-route"
   }
 
 }
@@ -66,7 +67,7 @@ resource "aws_subnet" "dualStack-subnet" {
     assign_ipv6_address_on_creation = true
 
     tags = {
-        Name = "mbuil-dualStack-subnet"
+        Name = "tfz-dualStack-subnet"
     }
 }
 
@@ -126,12 +127,12 @@ resource "aws_security_group" "allow_k8s" {
 
 resource "aws_instance" "myInstance" {
   count         = %COUNT%
-  ami           = "ami-0bb457e0c5095fa9d"
+  ami           = "ami-03fd334507439f4d1"
   instance_type = "t3.medium"
 
   subnet_id = aws_subnet.dualStack-subnet.id
 
-  key_name = "mbuil"
+  key_name = "tferrandiz-key"
 
   vpc_security_group_ids = [aws_security_group.allow_k8s.id]
 
@@ -143,7 +144,7 @@ resource "aws_instance" "myInstance" {
   user_data = filebase64(%CLOUDINIT%)
 
   tags = {
-    Name = "terraform-mbuil-vm${count.index}"
+    Name = "tofu-tfz-vm${count.index}"
   }
 }
 

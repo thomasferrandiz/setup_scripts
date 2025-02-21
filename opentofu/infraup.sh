@@ -1,5 +1,9 @@
 #!/bin/sh
 set +x
+set -e -o pipefail
+
+#use GNU sed on macos (brew install gsed)
+SED=gsed
 
 RKECLUSTERFILE="/home/tferrandiz/rke-cluster1/cluster.yml"
 RKECLUSTERSTATEFILE="/home/tferrandiz/rke-cluster1/cluster.rkestate"
@@ -20,20 +24,20 @@ case $1 in
         echo $ip2
         echo $ip3
         echo $ip4
-        sed -i '/^Host azure-ubuntu/{n;s/Hostname .*/Hostname '$ip0'/}' ~/.ssh/config
-        sed -i '/^Host azure-ubuntu2/{n;s/Hostname .*/Hostname '$ip1'/}' ~/.ssh/config
-        sed -i '/^Host azure-ubuntu3/{n;s/Hostname .*/Hostname '$ip2'/}' ~/.ssh/config
-        sed -i '/^Host azure-ubuntu4/{n;s/Hostname .*/Hostname '$ip3'/}' ~/.ssh/config
-        sed -i '/^Host azure-ubuntu5/{n;s/Hostname .*/Hostname '$ip4'/}' ~/.ssh/config
+        ${SED} -i '/^Host azure-ubuntu/{n;s/Hostname .*/Hostname '$ip0'/}' ~/.ssh/config
+        ${SED} -i '/^Host azure-ubuntu2/{n;s/Hostname .*/Hostname '$ip1'/}' ~/.ssh/config
+        ${SED} -i '/^Host azure-ubuntu3/{n;s/Hostname .*/Hostname '$ip2'/}' ~/.ssh/config
+        ${SED} -i '/^Host azure-ubuntu4/{n;s/Hostname .*/Hostname '$ip3'/}' ~/.ssh/config
+        ${SED} -i '/^Host azure-ubuntu5/{n;s/Hostname .*/Hostname '$ip4'/}' ~/.ssh/config
       ;;
       *)
         ip0=$(tofu output -json | jq '.ipAddresses.value[0]')
         ip1=$(tofu output -json | jq '.ipAddresses.value[1]')
         ip2=$(tofu output -json | jq '.ipAddresses.value[2]')
-        sed -i '/^Host azure-ubuntu/{n;s/Hostname .*/Hostname '$ip0'/}' ~/.ssh/config
-        sed -i '/^Host azure-ubuntu2/{n;s/Hostname .*/Hostname '$ip1'/}' ~/.ssh/config
-        sed -i '/^Host azure-ubuntu3/{n;s/Hostname .*/Hostname '$ip2'/}' ~/.ssh/config
-        sed -i '/^Host azure-windows/{n;s/Hostname .*/Hostname '$ip2'/}' ~/.ssh/config
+        ${SED} -i '/^Host azure-ubuntu/{n;s/Hostname .*/Hostname '$ip0'/}' ~/.ssh/config
+        ${SED} -i '/^Host azure-ubuntu2/{n;s/Hostname .*/Hostname '$ip1'/}' ~/.ssh/config
+        ${SED} -i '/^Host azure-ubuntu3/{n;s/Hostname .*/Hostname '$ip2'/}' ~/.ssh/config
+        ${SED} -i '/^Host azure-windows/{n;s/Hostname .*/Hostname '$ip2'/}' ~/.ssh/config
     esac
   ;;
   "aws")
@@ -44,14 +48,14 @@ case $1 in
     ipv4public3=$(tofu output -json | jq '.publicIP.value[2]')
     ipv4public4=$(tofu output -json | jq '.publicIP.value[3]')
     ipv4public5=$(tofu output -json | jq '.publicIP.value[4]')
-    sed -i '/^Host aws-ubuntu/{n;s/Hostname .*/Hostname '$ipv4public1'/}' ~/.ssh/config
-    sed -i '/^Host aws-ubuntu2/{n;s/Hostname .*/Hostname '$ipv4public2'/}' ~/.ssh/config
-    sed -i '/^Host aws-ubuntu3/{n;s/Hostname .*/Hostname '$ipv4public3'/}' ~/.ssh/config
-    sed -i '/^Host aws-ubuntu4/{n;s/Hostname .*/Hostname '$ipv4public4'/}' ~/.ssh/config
-    sed -i '/^Host aws-ubuntu5/{n;s/Hostname .*/Hostname '$ipv4public5'/}' ~/.ssh/config
-    sed -i '/^Host aws-suse/{n;s/Hostname .*/Hostname '$ipv4public1'/}' ~/.ssh/config
-    sed -i '/^Host aws-suse2/{n;s/Hostname .*/Hostname '$ipv4public2'/}' ~/.ssh/config
-    sed -i '/^Host aws-suse3/{n;s/Hostname .*/Hostname '$ipv4public3'/}' ~/.ssh/config
+    ${SED} -i '/^Host aws-ubuntu/{n;s/HostName .*/HostName '$ipv4public1'/}' ~/.ssh/config
+    ${SED} -i '/^Host aws-ubuntu2/{n;s/HostName .*/HostName '$ipv4public2'/}' ~/.ssh/config
+    ${SED} -i '/^Host aws-ubuntu3/{n;s/HostName .*/HostName '$ipv4public3'/}' ~/.ssh/config
+    ${SED} -i '/^Host aws-ubuntu4/{n;s/HostName .*/HostName '$ipv4public4'/}' ~/.ssh/config
+    ${SED} -i '/^Host aws-ubuntu5/{n;s/HostName .*/HostName '$ipv4public5'/}' ~/.ssh/config
+    ${SED} -i '/^Host aws-suse/{n;s/HostName .*/HostName '$ipv4public1'/}' ~/.ssh/config
+    ${SED} -i '/^Host aws-suse2/{n;s/HostName .*/HostName '$ipv4public2'/}' ~/.ssh/config
+    ${SED} -i '/^Host aws-suse3/{n;s/HostName .*/HostName '$ipv4public3'/}' ~/.ssh/config
   ;;
   *)
     echo "Something went wrong in the ssh"
@@ -66,23 +70,24 @@ updaterke1cluster() {
   ipPublic1=$(tofu output -json | jq '.ipAddresses.value[1]')
   ipPrivate0=$(tofu output -json | jq '.ipPrivateAddresses.value[0]')
   ipPrivate1=$(tofu output -json | jq '.ipPrivateAddresses.value[1]')
-  sed -i '4s/.*/- address: '${ipPublic0}'/' ${RKECLUSTERFILE}
-  sed -i '5s/.*/  internal_address: '${ipPrivate0}'/' ${RKECLUSTERFILE}
-  sed -i '12s/.*/- address: '${ipPublic1}'/' ${RKECLUSTERFILE}
-  sed -i '13s/.*/  internal_address: '${ipPrivate1}'/' ${RKECLUSTERFILE}
+  ${SED} -i '4s/.*/- address: '${ipPublic0}'/' ${RKECLUSTERFILE}
+  ${SED} -i '5s/.*/  internal_address: '${ipPrivate0}'/' ${RKECLUSTERFILE}
+  ${SED} -i '12s/.*/- address: '${ipPublic1}'/' ${RKECLUSTERFILE}
+  ${SED} -i '13s/.*/  internal_address: '${ipPrivate1}'/' ${RKECLUSTERFILE}
   rm ${RKECLUSTERSTATEFILE}
   popd
 }
 
 # applyTofu runs tofu apply and refresh to get the publicIP of the new VMs
 applyTofu () {
-pushd $1
-tofu apply --auto-approve
-sleep 10
-tofu refresh
-sleep 5
-changeSshConfig $1 $2
-popd
+  pushd $1
+  # tofu init
+  tofu apply --auto-approve
+  sleep 10
+  tofu refresh
+  sleep 5
+  changeSshConfig $1 $2
+  popd
 }
 
 
@@ -90,61 +95,61 @@ case $1 in
   "rke1")
     echo "rke1 option"
     cp azure/template/azure.tf.template azure/azure.tf
-    sed -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installDockerHelm.sh"/g' azure/azure.tf
-    sed -i 's/%COUNT%/2/g' azure/azure.tf
+    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installDockerHelm.sh"/g' azure/azure.tf
+    ${SED} -i 's/%COUNT%/2/g' azure/azure.tf
     applyTofu azure
     updaterke1cluster azure
   ;;
   "rancher")
     echo "rancher option"
     cp azure/template/azure.tf.template azure/azure.tf
-    sed -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3sAndRancher_${count.index}.sh"/g' azure/azure.tf
-    sed -i 's/%COUNT%/2/g' azure/azure.tf
+    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3sAndRancher_${count.index}.sh"/g' azure/azure.tf
+    ${SED} -i 's/%COUNT%/2/g' azure/azure.tf
     applyTofu azure
     echo "Access ${ip0//\"/}.sslip.io in your browser"
   ;;
   "rancher-aws")
     echo "rancher-aws option"
     cp aws/template/aws.tf.template aws/aws.tf
-    sed -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3sAndRancher_${count.index}.sh"/g' aws/aws.tf
-    sed -i 's/%COUNT%/2/g' aws/aws.tf
+    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3sAndRancher_${count.index}.sh"/g' aws/aws.tf
+    ${SED} -i 's/%COUNT%/2/g' aws/aws.tf
     applyTofu aws
     echo "Access ${ipv4public1//\"/}.sslip.io in your browser"
   ;;
   "rancher-prime")
     echo "rancher prime option"
     cp azure/template/azure.tf.template azure/azure.tf
-    sed -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3sAndRancherPrime_${count.index}.sh"/g' azure/azure.tf
-    sed -i 's/%COUNT%/2/g' azure/azure.tf
+    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3sAndRancherPrime_${count.index}.sh"/g' azure/azure.tf
+    ${SED} -i 's/%COUNT%/2/g' azure/azure.tf
     applyTofu azure
     echo "Access ${ip0//\"/}.sslip.io in your browser"
   ;;
   "rancher-prime-aws")
     echo "rancher prime option"
     cp aws/template/aws.tf.template aws/aws.tf
-    sed -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3sAndRancherPrime_${count.index}.sh"/g' aws/aws.tf
-    sed -i 's/%COUNT%/2/g' aws/aws.tf
+    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3sAndRancherPrime_${count.index}.sh"/g' aws/aws.tf
+    ${SED} -i 's/%COUNT%/2/g' aws/aws.tf
     applyTofu aws
     echo "Access ${ipv4public1//\"/}.sslip.io in your browser"
   ;;
   "k3s")
     echo "k3s option"
     cp azure/template/azure.tf.template azure/azure.tf
-    sed -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3s_${count.index}.sh"/g' azure/azure.tf
-    sed -i 's/%COUNT%/3/g' azure/azure.tf
+    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3s_${count.index}.sh"/g' azure/azure.tf
+    ${SED} -i 's/%COUNT%/3/g' azure/azure.tf
     applyTofu azure
   ;;
   "k3s-aws")
     echo "k3s option"
     cp aws/template/aws.tf.template aws/aws.tf
-    sed -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3s_${count.index}.sh"/g' aws/aws.tf
-    sed -i 's/%COUNT%/3/g' aws/aws.tf
+    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3s_${count.index}.sh"/g' aws/aws.tf
+    ${SED} -i 's/%COUNT%/3/g' aws/aws.tf
     applyTofu aws
   ;;
   "k3s-ipv6")
     echo "k3s-ipv6 option"
     cp aws/template/aws.tf.template aws/aws.tf
-    sed -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3snoDS.sh"/g' aws/aws.tf
+    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3snoDS.sh"/g' aws/aws.tf
     applyTofu aws
   ;;
   "rke2")
@@ -175,10 +180,10 @@ case $1 in
 	    echo "Multus included!"
 	    cniPlugin="$3,${cniPlugin}"
     fi
-    sed -i "s/cni: .*/cni: ${cniPlugin}/g" cloud-init-scripts\/installRKE2_0.sh
+    ${SED} -i "s/cni: .*/cni: ${cniPlugin}/g" cloud-init-scripts\/installRKE2_0.sh
     cp aws/template/aws.tf.template aws/aws.tf
-    sed -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installRKE2_${count.index}.sh"/g' aws/aws.tf
-    sed -i 's/%COUNT%/2/g' aws/aws.tf
+    ${SED} -i 's#%CLOUDINIT%#"../cloud-init-scripts/installRKE2_${count.index}.sh"#g' aws/aws.tf
+    ${SED} -i 's/%COUNT%/2/g' aws/aws.tf
     applyTofu aws
   ;;
   "windows")
@@ -198,8 +203,8 @@ case $1 in
       ;;
     esac
     cp azure/template/azure.tf.windows.template azure/azure.tf
-    sed -i "s/cni: .*/cni: ${cniPlugin}/g" cloud-init-scripts\/installRKE2NoDS_0.sh
-    sed -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installRKE2NoDS_${count.index}.sh"/g' azure/azure.tf
+    ${SED} -i "s/cni: .*/cni: ${cniPlugin}/g" cloud-init-scripts\/installRKE2NoDS_0.sh
+    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installRKE2NoDS_${count.index}.sh"/g' azure/azure.tf
     applyTofu azure
     echo "ssh azure-windows 'powershell.exe -File C:\AzureData\install.ps1 MYIP'"
     echo "ssh azure-windows 'powershell.exe C:\usr\local\bin\rke2.exe agent service --add'"
@@ -208,8 +213,8 @@ case $1 in
   "rke2-ha")
     echo "rke2 in HA mode"
     cp aws/template/aws.tf.template aws/aws.tf
-    sed -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installRKE2HA_${count.index}.sh"/g' aws/aws.tf
-    sed -i 's/%COUNT%/5/g' aws/aws.tf
+    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installRKE2HA_${count.index}.sh"/g' aws/aws.tf
+    ${SED} -i 's/%COUNT%/5/g' aws/aws.tf
     applyTofu aws HA
   ;;
   "demo-gpu")
