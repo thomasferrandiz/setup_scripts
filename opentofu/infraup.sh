@@ -1,8 +1,8 @@
 #!/bin/sh
 set +x
 
-RKECLUSTERFILE="/home/manuel/rke-cluster1/cluster.yml"
-RKECLUSTERSTATEFILE="/home/manuel/rke-cluster1/cluster.rkestate"
+RKECLUSTERFILE="/home/tferrandiz/rke-cluster1/cluster.yml"
+RKECLUSTERSTATEFILE="/home/tferrandiz/rke-cluster1/cluster.rkestate"
 
 # changeSshConfig adds the publicIP of the new VMs to ~/.ssh/config
 changeSshConfig () {
