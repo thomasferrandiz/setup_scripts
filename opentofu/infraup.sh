@@ -41,22 +41,33 @@ case $1 in
     esac
   ;;
   "aws")
-    ipv6=$(tofu output -json | jq '.ipv6IP.value[0]')
-    ipv4jump=$(tofu output -json | jq '.publicIP.value')
-    ipv4public1=$(tofu output -json | jq '.publicIP.value[0]')
-    ipv4public2=$(tofu output -json | jq '.publicIP.value[1]')
-    ipv4public3=$(tofu output -json | jq '.publicIP.value[2]')
-    ipv4public4=$(tofu output -json | jq '.publicIP.value[3]')
-    ipv4public5=$(tofu output -json | jq '.publicIP.value[4]')
-    ${SED} -i '/^Host aws-ubuntu/{n;s/HostName .*/HostName '$ipv4public1'/}' ~/.ssh/config
-    ${SED} -i '/^Host aws-ubuntu2/{n;s/HostName .*/HostName '$ipv4public2'/}' ~/.ssh/config
-    ${SED} -i '/^Host aws-ubuntu3/{n;s/HostName .*/HostName '$ipv4public3'/}' ~/.ssh/config
-    ${SED} -i '/^Host aws-ubuntu4/{n;s/HostName .*/HostName '$ipv4public4'/}' ~/.ssh/config
-    ${SED} -i '/^Host aws-ubuntu5/{n;s/HostName .*/HostName '$ipv4public5'/}' ~/.ssh/config
-    ${SED} -i '/^Host aws-suse/{n;s/HostName .*/HostName '$ipv4public1'/}' ~/.ssh/config
-    ${SED} -i '/^Host aws-suse2/{n;s/HostName .*/HostName '$ipv4public2'/}' ~/.ssh/config
-    ${SED} -i '/^Host aws-suse3/{n;s/HostName .*/HostName '$ipv4public3'/}' ~/.ssh/config
-  ;;
+    case $2 in
+      "cni-test")
+        ipv4CP=$(tofu output -json | jq '.publicIP_CP.value[0]')
+        ipv4DP_0=$(tofu output -json | jq '.publicIP_DP.value[0]')
+        ipv4DP_1=$(tofu output -json | jq '.publicIP_DP.value[1]')
+        ${SED} -i '/^Host aws-cni-cp/{n;s/HostName .*/HostName '$ipv4CP'/}' ~/.ssh/config
+        ${SED} -i '/^Host aws-cni-dp0/{n;s/HostName .*/HostName '$ipv4DP_0'/}' ~/.ssh/config
+        ${SED} -i '/^Host aws-cni-dp1/{n;s/HostName .*/HostName '$ipv4DP_1'/}' ~/.ssh/config
+      ;;
+      *)
+        ipv6=$(tofu output -json | jq '.ipv6IP.value[0]')
+        ipv4jump=$(tofu output -json | jq '.publicIP.value')
+        ipv4public1=$(tofu output -json | jq '.publicIP.value[0]')
+        ipv4public2=$(tofu output -json | jq '.publicIP.value[1]')
+        ipv4public3=$(tofu output -json | jq '.publicIP.value[2]')
+        ipv4public4=$(tofu output -json | jq '.publicIP.value[3]')
+        ipv4public5=$(tofu output -json | jq '.publicIP.value[4]')
+        ${SED} -i '/^Host aws-ubuntu/{n;s/HostName .*/HostName '$ipv4public1'/}' ~/.ssh/config
+        ${SED} -i '/^Host aws-ubuntu2/{n;s/HostName .*/HostName '$ipv4public2'/}' ~/.ssh/config
+        ${SED} -i '/^Host aws-ubuntu3/{n;s/HostName .*/HostName '$ipv4public3'/}' ~/.ssh/config
+        ${SED} -i '/^Host aws-ubuntu4/{n;s/HostName .*/HostName '$ipv4public4'/}' ~/.ssh/config
+        ${SED} -i '/^Host aws-ubuntu5/{n;s/HostName .*/HostName '$ipv4public5'/}' ~/.ssh/config
+        ${SED} -i '/^Host aws-suse/{n;s/HostName .*/HostName '$ipv4public1'/}' ~/.ssh/config
+        ${SED} -i '/^Host aws-suse2/{n;s/HostName .*/HostName '$ipv4public2'/}' ~/.ssh/config
+        ${SED} -i '/^Host aws-suse3/{n;s/HostName .*/HostName '$ipv4public3'/}' ~/.ssh/config
+    esac
+    ;;
   *)
     echo "Something went wrong in the ssh"
     exit 1
@@ -221,6 +232,12 @@ case $1 in
     echo "demo-gpu"
     cp aws/template/aws-demo.tf.template aws/aws.tf
     applyTofu aws
+  ;;
+  "test-cni")
+    echo "test-cni"
+    cp aws/template/aws-cni.tf.template aws/aws.tf
+    ${SED} -i 's#%CLOUDINIT%#"../cloud-init-scripts/cni-test/installRKE2_DP_${count.index}.sh"#g' aws/aws.tf
+    applyTofu aws cni-test
   ;;
   *)
     echo "$0 executed without arg. Please use rke1, rancher, rancher-prime, k3s, k3s-ipv6, rke2 or windows"

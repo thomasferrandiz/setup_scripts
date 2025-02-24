@@ -1,0 +1,186 @@
+terraform {
+    required_version = ">=0.12"
+    required_providers {
+        aws = {
+        source  = "hashicorp/aws"
+        version = "~>3.0"
+        }
+    }
+}
+
+provider "aws" {
+    region = var.regiondefault
+    access_key = var.access_key
+    secret_key = var.secret_key
+    token = var.token
+}
+
+// the netwok where instances will connect
+resource "aws_vpc" "vpc" {
+    cidr_block = "10.11.0.0/16"
+    assign_generated_ipv6_cidr_block = true
+    
+    enable_dns_support = true
+    enable_dns_hostnames = true
+
+    tags = {
+        Name = "tfz-cni-test"
+    }
+}
+
+// what will provide internet access to the vpc
+resource "aws_internet_gateway" "gw" {
+  vpc_id = aws_vpc.vpc.id
+
+  tags = {
+    Name = "tfz-igw"
+  }
+}
+
+resource "aws_default_route_table" "myRouter" {
+  default_route_table_id = aws_vpc.vpc.default_route_table_id
+
+  // All traffic (except for the vpc traffic) goes out using the internet gateway
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.gw.id
+  }
+
+  // All traffic (except for the vpc traffic) goes out using the internet gateway
+  route {
+    ipv6_cidr_block = "::/0"
+    gateway_id = aws_internet_gateway.gw.id
+  }
+
+  tags = {
+    Name = "tfz-default-route"
+  }
+
+}
+
+resource "aws_subnet" "dualStack-subnet" {
+    vpc_id = aws_vpc.vpc.id
+    cidr_block = "${cidrsubnet(aws_vpc.vpc.cidr_block, 12, 0)}"
+    map_public_ip_on_launch = true
+
+    ipv6_cidr_block = "${cidrsubnet(aws_vpc.vpc.ipv6_cidr_block, 8, 1)}"
+    assign_ipv6_address_on_creation = true
+
+    tags = {
+        Name = "tfz-dualStack-subnet"
+    }
+}
+
+resource "aws_security_group" "allow_k8s" {
+  name        = "allow_k8s"
+  description = "Allow K8s communications"
+  vpc_id      = aws_vpc.vpc.id
+
+  ingress {
+    description      = "SSH from VPC"
+    to_port          = 22
+    from_port        = 22
+    protocol         = "tcp"
+    cidr_blocks      = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  egress {
+    from_port        = 0
+    to_port          = 0
+    protocol         = "-1"
+    cidr_blocks      = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  ingress {
+    description      = "HTTP from VPC"
+    to_port          = 80
+    from_port        = 80
+    protocol         = "tcp"
+    cidr_blocks      = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  ingress {
+    description      = "HTTPS from VPC"
+    to_port          = 443
+    from_port        = 443
+    protocol         = "tcp"
+    cidr_blocks      = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  ingress {
+    description      = "All traffic"
+    to_port          = 0
+    from_port        = 0
+    protocol         = "-1"
+    cidr_blocks      = [aws_subnet.dualStack-subnet.cidr_block]
+  }
+
+  tags = {
+    Name = "allow_k8s"
+  }
+}
+
+resource "aws_instance" "myCPInstance" {
+  count         = 1
+  ami           = "ami-03fd334507439f4d1"
+  instance_type = "t3.large"
+
+  subnet_id = aws_subnet.dualStack-subnet.id
+
+  key_name = "tferrandiz-key"
+
+  vpc_security_group_ids = [aws_security_group.allow_k8s.id]
+
+  root_block_device {
+    volume_size = 30
+    volume_type = "standard"
+  }
+
+  user_data = filebase64("../cloud-init-scripts/cni-test/installRKE2_CP.sh")
+
+  tags = {
+    Name = "tfz-server-vm"
+  }
+}
+
+resource "aws_instance" "myDPInstance" {
+  count         = 2
+  ami           = "ami-0e2420433e60829b5"
+  instance_type = "m6gd.xlarge"              
+
+  subnet_id = aws_subnet.dualStack-subnet.id
+
+  key_name = "tferrandiz-key"
+
+  vpc_security_group_ids = [aws_security_group.allow_k8s.id]
+
+  root_block_device {
+    volume_size = 30
+    volume_type = "standard"
+  }
+
+  user_data = filebase64(%CLOUDINIT%)
+  tags = {
+    Name = "tfz-dp-vm${count.index}"
+  }
+}
+
+output "vpc_id" {
+    value = aws_vpc.vpc.id
+}
+
+output "subnet_id" {
+    value = aws_subnet.dualStack-subnet.id
+}
+
+output "publicIP_CP" {
+    value = aws_instance.myCPInstance[*].public_ip
+}
+
+output "publicIP_DP" {
+    value = aws_instance.myDPInstance[*].public_ip
+}
