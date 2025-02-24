@@ -35,3 +35,8 @@ mv windows-deployment.yml multitool.yaml httpbin.yaml /home/${user}/
 
 # Change the owner of all files
 find /home/${user}/ -type f -exec chown ${user}:${user} {} \;
+
+#Add k9s
+wget https://github.com/derailed/k9s/releases/download/v0.40.5/k9s_linux_amd64.deb
+sudo dpkg -i ./k9s_linux_amd64.deb
+rm k9s_linux_amd64.deb
