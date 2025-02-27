@@ -26,3 +26,5 @@ chown ${user}:${user} /home/${user}/config.yaml
 
 curl -sfL https://get.rke2.io | INSTALL_RKE2_CHANNEL="latest" INSTALL_RKE2_TYPE="agent" sh -
 systemctl enable --now rke2-agent
+
+sudo DEBIAN_FRONTEND=noninteractive  apt install -y iperf3
