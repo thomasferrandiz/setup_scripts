@@ -71,6 +71,20 @@ resource "aws_subnet" "dualStack-subnet" {
     }
 }
 
+resource "aws_vpc_ipv4_cidr_block_association" "secondary_cidr" {
+  vpc_id     = aws_vpc.vpc.id
+  cidr_block = "10.12.0.0/16"
+}
+
+
+resource "aws_subnet" "multus-subnet" {
+    vpc_id     = aws_vpc_ipv4_cidr_block_association.secondary_cidr.vpc_id
+    cidr_block = "10.12.0.0/24"
+    tags = {
+        Name = "tfz-multus-subnet"
+    }
+}
+
 resource "aws_security_group" "allow_k8s" {
   name        = "allow_k8s"
   description = "Allow K8s communications"
@@ -150,7 +164,7 @@ resource "aws_instance" "myCPInstance" {
 resource "aws_instance" "myDPInstance" {
   count         = 2
   ami           = "ami-0e2420433e60829b5"
-  instance_type = "m6gd.xlarge"              
+  instance_type = "m6gd.16xlarge"              
 
   subnet_id = aws_subnet.dualStack-subnet.id
 
@@ -166,6 +180,17 @@ resource "aws_instance" "myDPInstance" {
   user_data = filebase64(%CLOUDINIT%)
   tags = {
     Name = "tfz-dp-vm${count.index}"
+  }
+}
+
+resource "aws_network_interface" "multus_itf" {
+  subnet_id = aws_subnet.multus-subnet.id
+  count = 2
+  private_ip = "10.12.0.${count.index+1}/24"
+  attachment {
+    device_index = 1
+    instance = aws_instance.myDPInstance["${count.index}"].id
+
   }
 }
 

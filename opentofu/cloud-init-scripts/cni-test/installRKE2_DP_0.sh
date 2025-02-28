@@ -8,8 +8,18 @@ wget https://raw.githubusercontent.com/manuelbuil/PoCs/refs/heads/main/2022/terr
 source /tmp/utils.sh
 
 # The other created VM has the next or the previous IP. Ping to check which one is it
-myIP=$(ip addr show $(ip route | awk '/default/ { print $5 }') | grep "inet" | head -n 1 | awk '/inet/ {print $2}' | cut -d'/' -f1)
+myIP=$(ip addr show $(ip route | awk '/default/ { print $5; exit }') | grep "inet" | head -n 1 | awk '/inet/ {print $2}' | cut -d'/' -f1)
 echo This my myIP: ${myIP}
+
+# Second interface for use with multus
+cat <<EOF > /etc/netplan/51-multus.yaml
+network:
+  version: 2
+  ethernets:
+    ens6:
+      dhcp4: true
+EOF
+netplan apply
 
 result=$(getServerIP ${myIP})
 
