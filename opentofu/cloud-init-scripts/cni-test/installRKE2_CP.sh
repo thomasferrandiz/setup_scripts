@@ -11,12 +11,17 @@ write-kubeconfig-mode: 644
 token: "secret"
 cluster-cidr: 10.42.0.0/16,2001:cafe:42::/56
 service-cidr: 10.43.0.0/16,2001:cafe:43::/112
-cni: canal
+cni: flannel
 # curl -sfL https://get.rke2.io | sudo INSTALL_RKE2_CHANNEL="latest" sh -
 EOF
 
 mkdir -p /etc/rancher/rke2
 cp config.yaml /etc/rancher/rke2/config.yaml
+
+# install iperf3 pods for the tests
+mkdir -p /var/lib/rancher/rke2/server/manifests
+wget https://raw.githubusercontent.com/thomasferrandiz/cni-perf-tests/refs/heads/main/manifests/iperf3.yaml
+cp iperf3.yaml /var/lib/rancher/rke2/server/manifests
 
 user=$(ls /home/)
 mv config.yaml /home/${user}/config.yaml

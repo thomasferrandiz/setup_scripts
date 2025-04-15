@@ -44,8 +44,8 @@ case $1 in
     case $2 in
       "cni-test")
         ipv4CP=$(tofu output -json | jq '.publicIP_CP.value[0]')
-        ipv4DP_0=$(tofu output -json | jq '.publicIP_DP.value[0]')
-        ipv4DP_1=$(tofu output -json | jq '.publicIP_DP.value[1]')
+        ipv4DP_0=$(tofu output -json | jq '.publicIP_DP0.value')
+        ipv4DP_1=$(tofu output -json | jq '.publicIP_DP1.value')
         ${SED} -i '/^Host aws-cni-cp/{n;s/HostName .*/HostName '$ipv4CP'/}' ~/.ssh/config
         ${SED} -i '/^Host aws-cni-dp0/{n;s/HostName .*/HostName '$ipv4DP_0'/}' ~/.ssh/config
         ${SED} -i '/^Host aws-cni-dp1/{n;s/HostName .*/HostName '$ipv4DP_1'/}' ~/.ssh/config
@@ -101,6 +101,11 @@ applyTofu () {
   popd
 }
 
+planTofu() {
+  pushd $1
+  tofu plan
+  popd
+}
 
 case $1 in
   "rke1")
@@ -182,6 +187,10 @@ case $1 in
         echo "CNI plugin is flannel"
 	cniPlugin=flannel
       ;;
+      "none")
+        echo "CNI plugin is none"
+	cniPlugin=none
+      ;;
       *)
         echo "$2 is not a valid CNI plugin"
 	exit 1 
@@ -204,7 +213,7 @@ case $1 in
         echo "CNI plugin is calico"
         cniPlugin=calico
       ;;
-      "flannel")
+      "none")
         echo "CNI plugin is flannel"
         cniPlugin=flannel
       ;;

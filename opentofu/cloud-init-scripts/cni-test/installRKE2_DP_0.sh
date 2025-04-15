@@ -39,3 +39,6 @@ curl -sfL https://get.rke2.io | INSTALL_RKE2_CHANNEL="latest" INSTALL_RKE2_TYPE=
 systemctl enable --now rke2-agent
 
 sudo DEBIAN_FRONTEND=noninteractive  apt install -y iperf3
+sudo systemctl disable iperf3 --now
+sudo systemctl stop iperf3
+sudo killall iperf3

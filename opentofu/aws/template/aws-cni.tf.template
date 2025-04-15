@@ -163,8 +163,10 @@ resource "aws_instance" "myCPInstance" {
 
 resource "aws_instance" "myDPInstance" {
   count         = 2
-  ami           = "ami-0e2420433e60829b5"
-  instance_type = "m6gd.16xlarge"              
+  ami           = "ami-0e2420433e60829b5" # arm64
+  # ami           = "ami-03fd334507439f4d1" # amd64
+  instance_type = "m6gd.16xlarge"   # arm64
+  # instance_type = "m6a.16xlarge"      # amd64
 
   subnet_id = aws_subnet.dualStack-subnet.id
 
@@ -206,6 +208,22 @@ output "publicIP_CP" {
     value = aws_instance.myCPInstance[*].public_ip
 }
 
-output "publicIP_DP" {
-    value = aws_instance.myDPInstance[*].public_ip
+output "privateIP_CP" {
+    value = aws_instance.myCPInstance[*].private_ip
+}
+
+output "publicIP_DP0" {
+    value = aws_instance.myDPInstance[0].public_ip
+}
+
+output "privateIP_DP0" {
+    value = aws_instance.myDPInstance[0].private_ip
+}
+
+output "publicIP_DP1" {
+    value = aws_instance.myDPInstance[1].public_ip
+}
+
+output "privateIP_DP1" {
+    value = aws_instance.myDPInstance[1].private_ip
 }
