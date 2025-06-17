@@ -1,12 +1,12 @@
 #!/bin/bash -xv
 set -Eeuo pipefail
 
-#INSTALL_RKE2_VERSION=v1.28.4+rke2r1
+INSTALL_RKE2_VERSION=v1.31.7+rke2r1
 #INSTALL_RKE2_VERSION=v1.29.0-rc1+rke2r1
-INSTALL_RKE2_VERSION="latest"
+# INSTALL_RKE2_VERSION="latest"
 INSTALL_RKE2_TYPE="agent"
 
-RKE2_SERVER="10.1.1.14"
+RKE2_SERVER="10.124.138.101"
 
 # uninstall
 /opt/rke2/bin/rke2-uninstall.sh || true

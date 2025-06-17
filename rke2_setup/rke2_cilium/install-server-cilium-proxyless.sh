@@ -1,9 +1,9 @@
 #!/bin/bash -xv
 set -Eeuo pipefail
 
-#INSTALL_RKE2_VERSION=v1.28.4+rke2r1
+INSTALL_RKE2_VERSION=v1.31.7+rke2r1
 #INSTALL_RKE2_VERSION=v1.29.0-rc1+rke2r1
-INSTALL_RKE2_VERSION="latest"
+# INSTALL_RKE2_VERSION="latest"
 INSTALL_RKE2_TYPE="server"
 
 # uninstall
@@ -24,10 +24,24 @@ spec:
     cni:
       exclusive: false
     kubeProxyReplacement: true
-    k8sServiceHost: 10.84.158.1
+    k8sServiceHost: 10.124.138.101
     k8sServicePort: 6443
     bpf:
       masquerade: true
+    ipam:
+      mode: kubernetes
+    cni:
+      exclusive: false
+    l2announcements:
+      enabled: true
+    externalIPs:
+      enabled: true
+    socketLB: 
+      hostNamespaceOnly: true
+    ingressController:
+      enabled: true
+    gatewayAPI:
+      enabled: false
 EOF
 
 FILE="/var/lib/rancher/rke2/server/manifests/rke2-multus-config.yaml"
@@ -55,6 +69,15 @@ disable-kube-proxy: "true"
 cni:
   - multus
   - cilium
+# test
+cluster-cidr: 10.244.0.0/16
+service-cidr: 10.96.0.0/12
+disable:
+  - disable-cloud-controller
+  - rke2-snapshot-controller
+  - rke2-snapshot-controller-crd
+  - rke2-snapshot-validation-webhook
+  - rke2-ingress-nginx
 EOF
 
 curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE=${INSTALL_RKE2_TYPE} INSTALL_RKE2_CHANNEL=${INSTALL_RKE2_VERSION} sh -
