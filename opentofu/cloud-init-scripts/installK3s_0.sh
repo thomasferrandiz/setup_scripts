@@ -24,6 +24,11 @@ curl -sfL https://get.k3s.io | INSTALL_K3S_CHANNEL="latest" sh -
 
 echo "alias k=kubectl" >> /home/${user}/.profile
 
+#Add k9s
+wget https://github.com/derailed/k9s/releases/download/v0.40.5/k9s_linux_amd64.deb
+sudo dpkg -i ./k9s_linux_amd64.deb
+rm k9s_linux_amd64.deb
+
 # Add the typical manifests
 wget https://raw.githubusercontent.com/manuelbuil/PoCs/main/2023/windows-deployment.yml
 wget https://raw.githubusercontent.com/manuelbuil/PoCs/main/2021/multitool.yaml
