@@ -108,22 +108,22 @@ planTofu() {
 }
 
 case $1 in
-  "rke1")
-    echo "rke1 option"
-    cp azure/template/azure.tf.template azure/azure.tf
-    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installDockerHelm.sh"/g' azure/azure.tf
-    ${SED} -i 's/%COUNT%/2/g' azure/azure.tf
-    applyTofu azure
-    updaterke1cluster azure
-  ;;
-  "rancher")
-    echo "rancher option"
-    cp azure/template/azure.tf.template azure/azure.tf
-    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3sAndRancher_${count.index}.sh"/g' azure/azure.tf
-    ${SED} -i 's/%COUNT%/2/g' azure/azure.tf
-    applyTofu azure
-    echo "Access ${ip0//\"/}.sslip.io in your browser"
-  ;;
+  # "rke1")
+  #   echo "rke1 option"
+  #   cp azure/template/azure.tf.template azure/azure.tf
+  #   ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installDockerHelm.sh"/g' azure/azure.tf
+  #   ${SED} -i 's/%COUNT%/2/g' azure/azure.tf
+  #   applyTofu azure
+  #   updaterke1cluster azure
+  # ;;
+  # "rancher")
+  #   echo "rancher option"
+  #   cp azure/template/azure.tf.template azure/azure.tf
+  #   ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3sAndRancher_${count.index}.sh"/g' azure/azure.tf
+  #   ${SED} -i 's/%COUNT%/2/g' azure/azure.tf
+  #   applyTofu azure
+  #   echo "Access ${ip0//\"/}.sslip.io in your browser"
+  # ;;
   "rancher-aws")
     echo "rancher-aws option"
     cp aws/template/aws.tf.template aws/aws.tf
@@ -132,14 +132,14 @@ case $1 in
     applyTofu aws
     echo "Access ${ipv4public1//\"/}.sslip.io in your browser"
   ;;
-  "rancher-prime")
-    echo "rancher prime option"
-    cp azure/template/azure.tf.template azure/azure.tf
-    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3sAndRancherPrime_${count.index}.sh"/g' azure/azure.tf
-    ${SED} -i 's/%COUNT%/2/g' azure/azure.tf
-    applyTofu azure
-    echo "Access ${ip0//\"/}.sslip.io in your browser"
-  ;;
+  # "rancher-prime")
+  #   echo "rancher prime option"
+  #   cp azure/template/azure.tf.template azure/azure.tf
+  #   ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3sAndRancherPrime_${count.index}.sh"/g' azure/azure.tf
+  #   ${SED} -i 's/%COUNT%/2/g' azure/azure.tf
+  #   applyTofu azure
+  #   echo "Access ${ip0//\"/}.sslip.io in your browser"
+  # ;;
   "rancher-prime-aws")
     echo "rancher prime option"
     cp aws/template/aws.tf.template aws/aws.tf
@@ -148,24 +148,31 @@ case $1 in
     applyTofu aws
     echo "Access ${ipv4public1//\"/}.sslip.io in your browser"
   ;;
-  "k3s")
-    echo "k3s option"
-    cp azure/template/azure.tf.template azure/azure.tf
-    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3s_${count.index}.sh"/g' azure/azure.tf
-    ${SED} -i 's/%COUNT%/3/g' azure/azure.tf
-    applyTofu azure
-  ;;
-  "k3s-aws")
-    echo "k3s option"
+  # "k3s")
+  #   echo "k3s option"
+  #   cp azure/template/azure.tf.template azure/azure.tf
+  #   ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3s_${count.index}.sh"/g' azure/azure.tf
+  #   ${SED} -i 's/%COUNT%/3/g' azure/azure.tf
+  #   applyTofu azure
+  # ;;
+  # "k3s-aws")
+  #   echo "k3s option"
+  #   cp aws/template/aws.tf.template aws/aws.tf
+  #   ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3s_${count.index}.sh"/g' aws/aws.tf
+  #   ${SED} -i 's/%COUNT%/3/g' aws/aws.tf
+  #   applyTofu aws
+  # ;;
+  # "k3s-ipv6")
+  #   echo "k3s-ipv6 option"
+  #   cp aws/template/aws.tf.template aws/aws.tf
+  #   ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3snoDS.sh"/g' aws/aws.tf
+  #   applyTofu aws
+  # ;;
+  "kubeadm")
+    echo "kubeadm option"
     cp aws/template/aws.tf.template aws/aws.tf
-    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3s_${count.index}.sh"/g' aws/aws.tf
-    ${SED} -i 's/%COUNT%/3/g' aws/aws.tf
-    applyTofu aws
-  ;;
-  "k3s-ipv6")
-    echo "k3s-ipv6 option"
-    cp aws/template/aws.tf.template aws/aws.tf
-    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3snoDS.sh"/g' aws/aws.tf
+    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installKubeadm.sh"/g' aws/aws.tf
+    ${SED} -i 's/%COUNT%/2/g' aws/aws.tf
     applyTofu aws
   ;;
   "rke2")
