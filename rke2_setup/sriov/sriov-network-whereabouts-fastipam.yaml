@@ -1,0 +1,14 @@
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetwork
+metadata:
+  name: example-network
+  namespace: kube-system
+spec:
+  ipam: |
+    {
+      "type": "whereabouts",
+      "range": "192.168.2.0/24",
+      "node_slice_size": "/28"
+    }
+  vlan: 0 
+  resourceName: sriovmako

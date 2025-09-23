@@ -1,0 +1,34 @@
+kind: Namespace
+apiVersion: v1
+metadata:
+  name: iperf3-test
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  labels:
+    app: iperf3
+  name: iperf3-daemonset
+  namespace: iperf3-test
+spec:
+  selector:
+    matchLabels:
+      app: iperf3
+  template:
+    metadata:
+      labels:
+        app: iperf3
+      annotations:
+          k8s.v1.cni.cncf.io/networks: kube-system/example-network
+    spec:
+      containers:
+      - image: thomasferrandiz/iperf3:v0.0.1
+        imagePullPolicy: Always
+        name: iperf3server
+        command: ["iperf3", "-s"]
+        resources:
+          limits:
+            rancher.io/sriovmako:  1
+          requests:
+            rancher.io/sriovmako:  1
+        
