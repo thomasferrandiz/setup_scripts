@@ -1,9 +1,8 @@
 #!/bin/bash -xv
 set -Eeuo pipefail
 
-#INSTALL_RKE2_VERSION=v1.28.4+rke2r1
-#INSTALL_RKE2_VERSION=v1.29.0-rc1+rke2r1
-INSTALL_RKE2_VERSION="latest"
+source $(dirname $0)/version.sh
+
 INSTALL_RKE2_TYPE="server"
 
 CNI=calico
@@ -14,21 +13,21 @@ CNI=calico
 ipset destroy
 
 
-# FILE="/var/lib/rancher/rke2/server/manifests/rke2-calico-config.yaml"
-# mkdir -p $(dirname $FILE)
-# cat << EOF > $FILE
-# # $FILE
-# ---
-# apiVersion: helm.cattle.io/v1
-# kind: HelmChartConfig
-# metadata:
-#   name: rke2-calico
-#   namespace: kube-system
-# spec:
-#   valuesContent: |-
-#     felixConfiguration:
-#       featureDetectOverride: "ChecksumOffloadBroken=false"
-# EOF
+FILE="/var/lib/rancher/rke2/server/manifests/rke2-calico-config.yaml"
+mkdir -p $(dirname $FILE)
+cat << EOF > $FILE
+# $FILE
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: rke2-calico
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    felixConfiguration:
+      featureDetectOverride: "ChecksumOffloadBroken=false"
+EOF
 
 FILE="/etc/rancher/rke2/config.yaml"
 mkdir -p $(dirname $FILE) 

@@ -1,9 +1,8 @@
 #!/bin/bash -xv
 set -Eeuo pipefail
 
-INSTALL_RKE2_VERSION=v1.32.3+rke2r1
-#INSTALL_RKE2_VERSION=v1.29.0-rc1+rke2r1
-# INSTALL_RKE2_VERSION="latest"
+source $(dirname $0)/version.sh
+
 INSTALL_RKE2_TYPE="server"
 
 CNI=multus,canal

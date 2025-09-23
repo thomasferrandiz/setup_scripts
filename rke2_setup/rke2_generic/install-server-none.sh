@@ -3,23 +3,20 @@ set -Eeuo pipefail
 
 source $(dirname $0)/version.sh
 
-INSTALL_RKE2_TYPE="agent"
+INSTALL_RKE2_TYPE="server"
 
-# RKE2_SERVER="10.124.138.101"
-RKE2_SERVER="10.84.158.1"
+CNI=none
 # uninstall
 /opt/rke2/bin/rke2-uninstall.sh || true
 
-# clean-up sets potentially created by another incompatible version (for calico)
 ipset destroy
-
 
 FILE="/etc/rancher/rke2/config.yaml"
 mkdir -p $(dirname $FILE) 
 cat << EOF > $FILE 
-server: "https://${RKE2_SERVER}:9345"
+write-kubeconfig-mode: 644
 token: "secret"
-node-ip: 10.84.158.2
+cni: ${CNI}
 EOF
 
 curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE=${INSTALL_RKE2_TYPE} INSTALL_RKE2_CHANNEL=${INSTALL_RKE2_VERSION} sh -
@@ -38,4 +35,3 @@ ln -snf /var/lib/rancher/rke2/agent/etc/crictl.yaml /etc/crictl.yaml
 alias kubectl="/var/lib/rancher/rke2/bin/kubectl"
 alias k="kubectl"
 alias ks="kubectl -n kube-system"
-
