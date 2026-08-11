@@ -1,14 +1,20 @@
-#!/bin/sh
+#!/bin/bash
 set +x
 set -e -o pipefail
 
-#use GNU sed on macos (brew install gsed)
+# use GNU sed on macos (brew install gsed)
 SED=gsed
+
+# Directory of the base (variable-driven) AWS config and its variants.
+AWS_DIR="aws"
+AWS_DEMO_DIR="aws/demo"
+AWS_CNI_DIR="aws/cni-test"
 
 RKECLUSTERFILE="/home/tferrandiz/rke-cluster1/cluster.yml"
 RKECLUSTERSTATEFILE="/home/tferrandiz/rke-cluster1/cluster.rkestate"
 
-# changeSshConfig adds the publicIP of the new VMs to ~/.ssh/config
+# changeSshConfig adds the publicIP of the new VMs to ~/.ssh/config.
+# Must be called from inside the tofu config directory.
 changeSshConfig () {
 case $1 in
   "azure")
@@ -89,173 +95,142 @@ updaterke1cluster() {
   popd
 }
 
-# applyTofu runs tofu apply and refresh to get the publicIP of the new VMs
+# hclList builds an HCL list literal from its arguments, e.g.
+#   hclList a.sh b.sh  ->  ["a.sh","b.sh"]
+hclList() {
+  local out="["
+  local first=1
+  for f in "$@"; do
+    if [ $first -eq 1 ]; then first=0; else out="${out},"; fi
+    out="${out}\"${f}\""
+  done
+  echo "${out}]"
+}
+
+# applyTofu runs tofu apply and refresh to get the publicIP of the new VMs.
+# Usage: applyTofu <config-dir> <ssh-flavor> [extra tofu -var args...]
 applyTofu () {
-  pushd $1
-  # tofu init
-  tofu apply --auto-approve
+  local dir=$1
+  local sshFlavor=$2
+  shift 2
+  pushd "$dir" >/dev/null
+  tofu init -input=false >/dev/null
+  tofu apply --auto-approve "$@"
   sleep 10
-  tofu refresh
+  tofu apply -refresh-only --auto-approve "$@"
   sleep 5
-  changeSshConfig $1 $2
-  popd
+  changeSshConfig aws "$sshFlavor"
+  popd >/dev/null
 }
 
 planTofu() {
-  pushd $1
-  tofu plan
-  popd
+  pushd "$1" >/dev/null
+  shift
+  tofu init -input=false >/dev/null
+  tofu plan "$@"
+  popd >/dev/null
 }
 
 case $1 in
-  # "rke1")
-  #   echo "rke1 option"
-  #   cp azure/template/azure.tf.template azure/azure.tf
-  #   ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installDockerHelm.sh"/g' azure/azure.tf
-  #   ${SED} -i 's/%COUNT%/2/g' azure/azure.tf
-  #   applyTofu azure
-  #   updaterke1cluster azure
-  # ;;
-  # "rancher")
-  #   echo "rancher option"
-  #   cp azure/template/azure.tf.template azure/azure.tf
-  #   ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3sAndRancher_${count.index}.sh"/g' azure/azure.tf
-  #   ${SED} -i 's/%COUNT%/2/g' azure/azure.tf
-  #   applyTofu azure
-  #   echo "Access ${ip0//\"/}.sslip.io in your browser"
-  # ;;
   "rancher-aws")
     echo "rancher-aws option"
-    cp aws/template/aws.tf.template aws/aws.tf
-    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3sAndRancher_${count.index}.sh"/g' aws/aws.tf
-    ${SED} -i 's/%COUNT%/2/g' aws/aws.tf
-    applyTofu aws
-    echo "Access ${ipv4public1//\"/}.sslip.io in your browser"
+    files=$(hclList \
+      "../cloud-init-scripts/installK3sAndRancher_0.sh" \
+      "../cloud-init-scripts/installK3sAndRancher_1.sh")
+    applyTofu "${AWS_DIR}" "" -var="cloud_init_files=${files}"
+    echo "Access <public-ip>.sslip.io in your browser (see 'tofu output publicIP')"
   ;;
-  # "rancher-prime")
-  #   echo "rancher prime option"
-  #   cp azure/template/azure.tf.template azure/azure.tf
-  #   ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3sAndRancherPrime_${count.index}.sh"/g' azure/azure.tf
-  #   ${SED} -i 's/%COUNT%/2/g' azure/azure.tf
-  #   applyTofu azure
-  #   echo "Access ${ip0//\"/}.sslip.io in your browser"
-  # ;;
   "rancher-prime-aws")
     echo "rancher prime option"
-    cp aws/template/aws.tf.template aws/aws.tf
-    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3sAndRancherPrime_${count.index}.sh"/g' aws/aws.tf
-    ${SED} -i 's/%COUNT%/2/g' aws/aws.tf
-    applyTofu aws
-    echo "Access ${ipv4public1//\"/}.sslip.io in your browser"
+    files=$(hclList \
+      "../cloud-init-scripts/installK3sAndRancherPrime_0.sh" \
+      "../cloud-init-scripts/installK3sAndRancherPrime_1.sh")
+    applyTofu "${AWS_DIR}" "" -var="cloud_init_files=${files}"
+    echo "Access <public-ip>.sslip.io in your browser (see 'tofu output publicIP')"
   ;;
-  # "k3s")
-  #   echo "k3s option"
-  #   cp azure/template/azure.tf.template azure/azure.tf
-  #   ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3s_${count.index}.sh"/g' azure/azure.tf
-  #   ${SED} -i 's/%COUNT%/3/g' azure/azure.tf
-  #   applyTofu azure
-  # ;;
   "k3s-aws")
     echo "k3s option"
-    cp aws/template/aws.tf.template aws/aws.tf
-    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3s_${count.index}.sh"/g' aws/aws.tf
-    ${SED} -i 's/%COUNT%/3/g' aws/aws.tf
-    applyTofu aws
+    files=$(hclList \
+      "../cloud-init-scripts/installK3s_0.sh" \
+      "../cloud-init-scripts/installK3s_1.sh" \
+      "../cloud-init-scripts/installK3s_2.sh")
+    applyTofu "${AWS_DIR}" "" -var="cloud_init_files=${files}"
   ;;
-  # "k3s-ipv6")
-  #   echo "k3s-ipv6 option"
-  #   cp aws/template/aws.tf.template aws/aws.tf
-  #   ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3snoDS.sh"/g' aws/aws.tf
-  #   applyTofu aws
-  # ;;
   "kubeadm")
     echo "kubeadm option"
-    cp aws/template/aws.tf.template aws/aws.tf
-    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installKubeadm.sh"/g' aws/aws.tf
-    ${SED} -i 's/%COUNT%/2/g' aws/aws.tf
-    applyTofu aws
+    files=$(hclList \
+      "../cloud-init-scripts/installKubeadm.sh" \
+      "../cloud-init-scripts/installKubeadm.sh")
+    applyTofu "${AWS_DIR}" "" -var="cloud_init_files=${files}"
   ;;
   "rke2")
     echo "rke2 option with cni plugin $2"
     case $2 in
       ""|"canal")
         echo "CNI plugin is canal"
-	cniPlugin=canal
+        cniPlugin=canal
       ;;
       "calico")
         echo "CNI plugin is calico"
-	cniPlugin=calico
+        cniPlugin=calico
       ;;
       "cilium")
         echo "CNI plugin is cilium"
-	cniPlugin=cilium
+        cniPlugin=cilium
       ;;
       "flannel")
         echo "CNI plugin is flannel"
-	cniPlugin=flannel
+        cniPlugin=flannel
       ;;
       "none")
         echo "CNI plugin is none"
-	cniPlugin=none
-      ;;
-      *)
-        echo "$2 is not a valid CNI plugin"
-	exit 1 
-      ;;
-    esac
-    if [ "$3" == "multus" ];then
-	    echo "Multus included!"
-	    cniPlugin="$3,${cniPlugin}"
-    fi
-    ${SED} -i "s/cni: .*/cni: ${cniPlugin}/g" cloud-init-scripts\/installRKE2_0.sh
-    cp aws/template/aws.tf.template aws/aws.tf
-    ${SED} -i 's#%CLOUDINIT%#"../cloud-init-scripts/installRKE2_${count.index}.sh"#g' aws/aws.tf
-    ${SED} -i 's/%COUNT%/2/g' aws/aws.tf
-    applyTofu aws
-  ;;
-  "windows")
-    echo "rke2 and windows with cni plugin $2"
-    case $2 in
-      ""|"calico")
-        echo "CNI plugin is calico"
-        cniPlugin=calico
-      ;;
-      "none")
-        echo "CNI plugin is flannel"
-        cniPlugin=flannel
+        cniPlugin=none
       ;;
       *)
         echo "$2 is not a valid CNI plugin"
         exit 1
       ;;
     esac
-    cp azure/template/azure.tf.windows.template azure/azure.tf
-    ${SED} -i "s/cni: .*/cni: ${cniPlugin}/g" cloud-init-scripts\/installRKE2NoDS_0.sh
-    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installRKE2NoDS_${count.index}.sh"/g' azure/azure.tf
-    applyTofu azure
-    echo "ssh azure-windows 'powershell.exe -File C:\AzureData\install.ps1 MYIP'"
-    echo "ssh azure-windows 'powershell.exe C:\usr\local\bin\rke2.exe agent service --add'"
-    echo "ssh azure-windows 'powershell.exe Start-Service -Name rke2'"
+    if [ "$3" == "multus" ]; then
+      echo "Multus included!"
+      cniPlugin="$3,${cniPlugin}"
+    fi
+    # Generate a copy of the server cloud-init with the requested CNI plugin,
+    # instead of editing the tracked script in place. The generated/ dir is
+    # gitignored.
+    mkdir -p cloud-init-scripts/generated
+    ${SED} "s/cni: .*/cni: ${cniPlugin}/g" \
+      cloud-init-scripts/installRKE2_0.sh \
+      > cloud-init-scripts/generated/installRKE2_0.sh
+    files=$(hclList \
+      "../cloud-init-scripts/generated/installRKE2_0.sh" \
+      "../cloud-init-scripts/installRKE2_1.sh")
+    applyTofu "${AWS_DIR}" "" -var="cloud_init_files=${files}"
   ;;
   "rke2-ha")
     echo "rke2 in HA mode"
-    cp aws/template/aws.tf.template aws/aws.tf
-    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installRKE2HA_${count.index}.sh"/g' aws/aws.tf
-    ${SED} -i 's/%COUNT%/5/g' aws/aws.tf
-    applyTofu aws HA
+    files=$(hclList \
+      "../cloud-init-scripts/installRKE2HA_0.sh" \
+      "../cloud-init-scripts/installRKE2HA_1.sh" \
+      "../cloud-init-scripts/installRKE2HA_2.sh" \
+      "../cloud-init-scripts/installRKE2HA_3.sh" \
+      "../cloud-init-scripts/installRKE2HA_4.sh")
+    applyTofu "${AWS_DIR}" "HA" -var="cloud_init_files=${files}"
   ;;
   "demo-gpu")
     echo "demo-gpu"
-    cp aws/template/aws-demo.tf.template aws/aws.tf
-    applyTofu aws
+    applyTofu "${AWS_DEMO_DIR}" ""
   ;;
   "test-cni")
     echo "test-cni"
-    cp aws/template/aws-cni.tf.template aws/aws.tf
-    ${SED} -i 's#%CLOUDINIT%#"../cloud-init-scripts/cni-test/installRKE2_DP_${count.index}.sh"#g' aws/aws.tf
-    applyTofu aws cni-test
+    files=$(hclList \
+      "../../cloud-init-scripts/cni-test/installRKE2_DP_0.sh" \
+      "../../cloud-init-scripts/cni-test/installRKE2_DP_1.sh")
+    applyTofu "${AWS_CNI_DIR}" "cni-test" -var="cloud_init_files=${files}"
   ;;
   *)
-    echo "$0 executed without arg. Please use rke1, rancher, rancher-prime, k3s, k3s-ipv6, rke2 or windows"
+    echo "$0 executed without a valid arg."
+    echo "Usage: $0 <flavor> [cni] [multus]"
+    echo "Flavors: k3s-aws, rancher-aws, rancher-prime-aws, kubeadm, rke2, rke2-ha, demo-gpu, test-cni"
     exit 1
 esac

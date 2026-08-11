@@ -1,0 +1,20 @@
+# Example variable values. Copy to terraform.tfvars and adjust.
+#
+# Credentials: prefer exporting AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY /
+# AWS_SESSION_TOKEN in your shell instead of setting them here. If you do set
+# them here, keep terraform.tfvars out of version control (it is gitignored).
+
+region = "eu-south-2"
+
+# Required: an existing VPC that has an IPv6 CIDR block assigned.
+vpc_id = "vpc-0123456789abcdef0"
+
+# access_key = "AKIA..."
+# secret_key = "..."
+# token      = "..."
+
+# cloud_init_files is normally set by infraup.sh, but can be overridden:
+# cloud_init_files = [
+#   "../cloud-init-scripts/installK3s_0.sh",
+#   "../cloud-init-scripts/installK3s_1.sh",
+# ]

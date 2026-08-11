@@ -1,34 +1,33 @@
 terraform {
-    required_version = ">=0.12"
-    required_providers {
-        aws = {
-        source  = "hashicorp/aws"
-        version = "~>3.0"
-        }
+  required_version = ">= 1.0"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
     }
+  }
 }
 
 provider "aws" {
-    region = var.regiondefault
-    access_key = var.access_key
-    secret_key = var.secret_key
-    token = var.token
+  region = var.region
+
+  access_key = var.access_key
+  secret_key = var.secret_key
+  token      = var.token
 }
 
-// the netwok where instances will connect
 resource "aws_vpc" "vpc" {
-    cidr_block = "10.11.0.0/16"
-    assign_generated_ipv6_cidr_block = true
-    
-    enable_dns_support = true
-    enable_dns_hostnames = true
+  cidr_block                       = "10.11.0.0/16"
+  assign_generated_ipv6_cidr_block = true
 
-    tags = {
-        Name = "tfz-cni-test"
-    }
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+
+  tags = {
+    Name = "tfz-cni-test"
+  }
 }
 
-// what will provide internet access to the vpc
 resource "aws_internet_gateway" "gw" {
   vpc_id = aws_vpc.vpc.id
 
@@ -40,35 +39,32 @@ resource "aws_internet_gateway" "gw" {
 resource "aws_default_route_table" "myRouter" {
   default_route_table_id = aws_vpc.vpc.default_route_table_id
 
-  // All traffic (except for the vpc traffic) goes out using the internet gateway
   route {
     cidr_block = "0.0.0.0/0"
     gateway_id = aws_internet_gateway.gw.id
   }
 
-  // All traffic (except for the vpc traffic) goes out using the internet gateway
   route {
     ipv6_cidr_block = "::/0"
-    gateway_id = aws_internet_gateway.gw.id
+    gateway_id      = aws_internet_gateway.gw.id
   }
 
   tags = {
     Name = "tfz-default-route"
   }
-
 }
 
 resource "aws_subnet" "dualStack-subnet" {
-    vpc_id = aws_vpc.vpc.id
-    cidr_block = "${cidrsubnet(aws_vpc.vpc.cidr_block, 12, 0)}"
-    map_public_ip_on_launch = true
+  vpc_id                  = aws_vpc.vpc.id
+  cidr_block              = cidrsubnet(aws_vpc.vpc.cidr_block, 12, 0)
+  map_public_ip_on_launch = true
 
-    ipv6_cidr_block = "${cidrsubnet(aws_vpc.vpc.ipv6_cidr_block, 8, 1)}"
-    assign_ipv6_address_on_creation = true
+  ipv6_cidr_block                 = cidrsubnet(aws_vpc.vpc.ipv6_cidr_block, 8, 1)
+  assign_ipv6_address_on_creation = true
 
-    tags = {
-        Name = "tfz-dualStack-subnet"
-    }
+  tags = {
+    Name = "tfz-dualStack-subnet"
+  }
 }
 
 resource "aws_vpc_ipv4_cidr_block_association" "secondary_cidr" {
@@ -76,13 +72,12 @@ resource "aws_vpc_ipv4_cidr_block_association" "secondary_cidr" {
   cidr_block = "10.12.0.0/16"
 }
 
-
 resource "aws_subnet" "multus-subnet" {
-    vpc_id     = aws_vpc_ipv4_cidr_block_association.secondary_cidr.vpc_id
-    cidr_block = "10.12.0.0/24"
-    tags = {
-        Name = "tfz-multus-subnet"
-    }
+  vpc_id     = aws_vpc_ipv4_cidr_block_association.secondary_cidr.vpc_id
+  cidr_block = "10.12.0.0/24"
+  tags = {
+    Name = "tfz-multus-subnet"
+  }
 }
 
 resource "aws_security_group" "allow_k8s" {
@@ -126,11 +121,11 @@ resource "aws_security_group" "allow_k8s" {
   }
 
   ingress {
-    description      = "All traffic"
-    to_port          = 0
-    from_port        = 0
-    protocol         = "-1"
-    cidr_blocks      = [aws_subnet.dualStack-subnet.cidr_block]
+    description = "All traffic"
+    to_port     = 0
+    from_port   = 0
+    protocol    = "-1"
+    cidr_blocks = [aws_subnet.dualStack-subnet.cidr_block]
   }
 
   tags = {
@@ -154,7 +149,7 @@ resource "aws_instance" "myCPInstance" {
     volume_type = "standard"
   }
 
-  user_data = filebase64("../cloud-init-scripts/cni-test/installRKE2_CP.sh")
+  user_data = filebase64("../../cloud-init-scripts/cni-test/installRKE2_CP.sh")
 
   tags = {
     Name = "tfz-server-vm"
@@ -162,10 +157,10 @@ resource "aws_instance" "myCPInstance" {
 }
 
 resource "aws_instance" "myDPInstance" {
-  count         = 2
-  ami           = "ami-0e2420433e60829b5" # arm64
+  count = length(var.cloud_init_files)
+  ami   = "ami-0e2420433e60829b5" # arm64
   # ami           = "ami-03fd334507439f4d1" # amd64
-  instance_type = "m6gd.16xlarge"   # arm64
+  instance_type = "m6gd.16xlarge" # arm64
   # instance_type = "m6a.16xlarge"      # amd64
 
   subnet_id = aws_subnet.dualStack-subnet.id
@@ -179,51 +174,50 @@ resource "aws_instance" "myDPInstance" {
     volume_type = "standard"
   }
 
-  user_data = filebase64(%CLOUDINIT%)
+  user_data = filebase64(var.cloud_init_files[count.index])
   tags = {
     Name = "tfz-dp-vm${count.index}"
   }
 }
 
 resource "aws_network_interface" "multus_itf" {
-  subnet_id = aws_subnet.multus-subnet.id
-  count = 2
-  private_ip = "10.12.0.${count.index+1}/24"
+  subnet_id  = aws_subnet.multus-subnet.id
+  count      = length(var.cloud_init_files)
+  private_ip = "10.12.0.${count.index + 1}/24"
   attachment {
     device_index = 1
-    instance = aws_instance.myDPInstance["${count.index}"].id
-
+    instance     = aws_instance.myDPInstance[count.index].id
   }
 }
 
 output "vpc_id" {
-    value = aws_vpc.vpc.id
+  value = aws_vpc.vpc.id
 }
 
 output "subnet_id" {
-    value = aws_subnet.dualStack-subnet.id
+  value = aws_subnet.dualStack-subnet.id
 }
 
 output "publicIP_CP" {
-    value = aws_instance.myCPInstance[*].public_ip
+  value = aws_instance.myCPInstance[*].public_ip
 }
 
 output "privateIP_CP" {
-    value = aws_instance.myCPInstance[*].private_ip
+  value = aws_instance.myCPInstance[*].private_ip
 }
 
 output "publicIP_DP0" {
-    value = aws_instance.myDPInstance[0].public_ip
+  value = aws_instance.myDPInstance[0].public_ip
 }
 
 output "privateIP_DP0" {
-    value = aws_instance.myDPInstance[0].private_ip
+  value = aws_instance.myDPInstance[0].private_ip
 }
 
 output "publicIP_DP1" {
-    value = aws_instance.myDPInstance[1].public_ip
+  value = aws_instance.myDPInstance[1].public_ip
 }
 
 output "privateIP_DP1" {
-    value = aws_instance.myDPInstance[1].private_ip
+  value = aws_instance.myDPInstance[1].private_ip
 }

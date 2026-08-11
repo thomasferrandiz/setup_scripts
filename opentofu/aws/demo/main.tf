@@ -1,33 +1,33 @@
 terraform {
-    required_version = ">=0.12"
-    required_providers {
-        aws = {
-        source  = "hashicorp/aws"
-        version = "~>3.0"
-        }
+  required_version = ">= 1.0"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
     }
+  }
 }
 
 provider "aws" {
-    region = var.regiongpu
-    access_key = var.access_key
-    secret_key = var.secret_key
+  region = var.region
+
+  access_key = var.access_key
+  secret_key = var.secret_key
+  token      = var.token
 }
 
-// the netwok where instances will connect
 resource "aws_vpc" "vpc" {
-    cidr_block = "10.11.0.0/16"
-    assign_generated_ipv6_cidr_block = true
-    
-    enable_dns_support = true
-    enable_dns_hostnames = true
+  cidr_block                       = "10.11.0.0/16"
+  assign_generated_ipv6_cidr_block = true
 
-    tags = {
-        Name = "rke2-k3s-terraform"
-    }
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+
+  tags = {
+    Name = "rke2-k3s-terraform"
+  }
 }
 
-// what will provide internet access to the vpc
 resource "aws_internet_gateway" "gw" {
   vpc_id = aws_vpc.vpc.id
 
@@ -39,35 +39,32 @@ resource "aws_internet_gateway" "gw" {
 resource "aws_default_route_table" "myRouter" {
   default_route_table_id = aws_vpc.vpc.default_route_table_id
 
-  // All traffic (except for the vpc traffic) goes out using the internet gateway
   route {
     cidr_block = "0.0.0.0/0"
     gateway_id = aws_internet_gateway.gw.id
   }
 
-  // All traffic (except for the vpc traffic) goes out using the internet gateway
   route {
     ipv6_cidr_block = "::/0"
-    gateway_id = aws_internet_gateway.gw.id
+    gateway_id      = aws_internet_gateway.gw.id
   }
 
   tags = {
     Name = "mbuil-default-route"
   }
-
 }
 
 resource "aws_subnet" "dualStack-subnet" {
-    vpc_id = aws_vpc.vpc.id
-    cidr_block = "${cidrsubnet(aws_vpc.vpc.cidr_block, 12, 0)}"
-    map_public_ip_on_launch = true
+  vpc_id                  = aws_vpc.vpc.id
+  cidr_block              = cidrsubnet(aws_vpc.vpc.cidr_block, 12, 0)
+  map_public_ip_on_launch = true
 
-    ipv6_cidr_block = "${cidrsubnet(aws_vpc.vpc.ipv6_cidr_block, 8, 1)}"
-    assign_ipv6_address_on_creation = true
+  ipv6_cidr_block                 = cidrsubnet(aws_vpc.vpc.ipv6_cidr_block, 8, 1)
+  assign_ipv6_address_on_creation = true
 
-    tags = {
-        Name = "mbuil-dualStack-subnet"
-    }
+  tags = {
+    Name = "mbuil-dualStack-subnet"
+  }
 }
 
 resource "aws_security_group" "allow_k8s" {
@@ -111,11 +108,11 @@ resource "aws_security_group" "allow_k8s" {
   }
 
   ingress {
-    description      = "All traffic"
-    to_port          = 0
-    from_port        = 0
-    protocol         = "-1"
-    cidr_blocks      = [aws_subnet.dualStack-subnet.cidr_block]
+    description = "All traffic"
+    to_port     = 0
+    from_port   = 0
+    protocol    = "-1"
+    cidr_blocks = [aws_subnet.dualStack-subnet.cidr_block]
   }
 
   tags = {
@@ -139,7 +136,7 @@ resource "aws_instance" "myInstance" {
     volume_type = "standard"
   }
 
-  user_data = filebase64("../cloud-init-scripts/demoSUSECON.sh")
+  user_data = filebase64("../../cloud-init-scripts/demoSUSECON.sh")
 
   tags = {
     Name = "terraform-mbuil-vm${count.index}"
@@ -162,7 +159,7 @@ resource "aws_instance" "myGPUInstance" {
     volume_type = "standard"
   }
 
-  user_data = filebase64("../cloud-init-scripts/installGPUSLES.sh")
+  user_data = filebase64("../../cloud-init-scripts/installGPUSLES.sh")
 
   tags = {
     Name = "terraform-mbuil-vm-gpu"
@@ -170,17 +167,17 @@ resource "aws_instance" "myGPUInstance" {
 }
 
 output "vpc_id" {
-    value = aws_vpc.vpc.id
+  value = aws_vpc.vpc.id
 }
 
 output "subnet_id" {
-    value = aws_subnet.dualStack-subnet.id
+  value = aws_subnet.dualStack-subnet.id
 }
 
 output "publicIP" {
-    value = aws_instance.myInstance[*].public_ip
+  value = aws_instance.myInstance[*].public_ip
 }
 
 output "publicIPGPU" {
-    value = aws_instance.myGPUInstance[0].public_ip
+  value = aws_instance.myGPUInstance[0].public_ip
 }
