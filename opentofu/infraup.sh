@@ -155,13 +155,13 @@ case $1 in
   #   ${SED} -i 's/%COUNT%/3/g' azure/azure.tf
   #   applyTofu azure
   # ;;
-  # "k3s-aws")
-  #   echo "k3s option"
-  #   cp aws/template/aws.tf.template aws/aws.tf
-  #   ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3s_${count.index}.sh"/g' aws/aws.tf
-  #   ${SED} -i 's/%COUNT%/3/g' aws/aws.tf
-  #   applyTofu aws
-  # ;;
+  "k3s-aws")
+    echo "k3s option"
+    cp aws/template/aws.tf.template aws/aws.tf
+    ${SED} -i 's/%CLOUDINIT%/"..\/cloud-init-scripts\/installK3s_${count.index}.sh"/g' aws/aws.tf
+    ${SED} -i 's/%COUNT%/3/g' aws/aws.tf
+    applyTofu aws
+  ;;
   # "k3s-ipv6")
   #   echo "k3s-ipv6 option"
   #   cp aws/template/aws.tf.template aws/aws.tf

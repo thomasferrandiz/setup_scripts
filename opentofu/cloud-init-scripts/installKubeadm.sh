@@ -45,20 +45,20 @@ sudo gawk -i inplace '!/disabled_plugins/' /etc/containerd/config.toml
 
 sudo systemctl enable --now containerd
 
-# apt-transport-https may be a dummy package; if so, you can skip that package
-apt-get install -y apt-transport-https ca-certificates curl gpg
-# If the directory `/etc/apt/keyrings` does not exist, it should be created before the curl command, read the note below.
-mkdir -p -m 755 /etc/apt/keyrings
-curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.33/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+# # apt-transport-https may be a dummy package; if so, you can skip that package
+# apt-get install -y apt-transport-https ca-certificates curl gpg
+# # If the directory `/etc/apt/keyrings` does not exist, it should be created before the curl command, read the note below.
+# mkdir -p -m 755 /etc/apt/keyrings
+# curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.33/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 
-# This overwrites any existing configuration in /etc/apt/sources.list.d/kubernetes.list
-echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.33/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+# # This overwrites any existing configuration in /etc/apt/sources.list.d/kubernetes.list
+# echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.33/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
 
-apt-get update
-apt-get install -y kubelet kubeadm kubectl
-apt-mark hold kubelet kubeadm kubectl
+# apt-get update
+# apt-get install -y kubelet kubeadm kubectl
+# apt-mark hold kubelet kubeadm kubectl
 
-systemctl enable --now kubelet
+# systemctl enable --now kubelet
 
 
 
