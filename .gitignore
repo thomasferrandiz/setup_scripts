@@ -1,8 +1,15 @@
 azure/azure-credentials.txt
-opentofu/aws/variables.tf
-opentofu/aws/.terraform*
-opentofu/aws/aws.tf
-opentofu/aws/terraform*
+# Local state, provider plugins and real variable values for every AWS config
+# (base config plus the demo/ and cni-test/ variants).
+opentofu/aws/**/.terraform/*
+opentofu/aws/**/.terraform.lock.hcl
+opentofu/aws/**/terraform.tfstate
+opentofu/aws/**/terraform.tfstate.*
+opentofu/aws/**/*.tfvars
+opentofu/aws/**/*.auto.tfvars
+!opentofu/aws/**/*.tfvars.example
+# Generated cloud-init scripts (e.g. with an injected CNI plugin).
+opentofu/cloud-init-scripts/generated/
 azure/existing/.terraform*
 azure/.terraform*
 azure/azure.tf
