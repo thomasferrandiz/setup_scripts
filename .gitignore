@@ -15,3 +15,4 @@ azure/.terraform*
 azure/azure.tf
 azure/terraform*
 azure/existing/terraform*
+opentofu/aws/.terraform.tfstate.lock.info

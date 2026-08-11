@@ -24,6 +24,10 @@ data "aws_vpc" "vpc" {
   id = var.vpc_id
 }
 
+locals {
+  server_private_ip = cidrhost(aws_subnet.dualStack-subnet.cidr_block, 10)
+}
+
 resource "aws_subnet" "dualStack-subnet" {
   vpc_id                  = data.aws_vpc.vpc.id
   cidr_block              = cidrsubnet(data.aws_vpc.vpc.cidr_block, 4, 4)
@@ -98,6 +102,9 @@ resource "aws_instance" "myInstance" {
   ami           = "ami-03fd334507439f4d1"
   instance_type = "t3.large"
 
+  # index 0 is the server; give it a fixed IP so agents can join without discovery
+  private_ip = count.index == 0 ? local.server_private_ip : null
+
   subnet_id = aws_subnet.dualStack-subnet.id
 
   key_name = "tferrandiz-key"
@@ -109,7 +116,13 @@ resource "aws_instance" "myInstance" {
     volume_type = "standard"
   }
 
-  user_data = fileexists(var.cloud_init_files[count.index]) ? filebase64(var.cloud_init_files[count.index]) : null
+  user_data = fileexists(var.cloud_init_files[count.index]) ? base64encode(templatefile(
+    var.cloud_init_files[count.index],
+    {
+      server_ip = local.server_private_ip
+      token     = var.rke2_token
+    }
+  )) : null
 
   tags = {
     Name = "tofu-tfz-vm${count.index}"
