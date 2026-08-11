@@ -24,24 +24,42 @@ spec:
     cni:
       exclusive: false
     kubeProxyReplacement: true
+    localRedirectPolicy: true
     k8sServiceHost: 10.84.158.1
     k8sServicePort: 6443
-    bpf:
-      masquerade: true
-    ipam:
-      mode: kubernetes
-    cni:
-      exclusive: false
-    l2announcements:
+    # bpf:
+    #   masquerade: true
+    # ipam:
+    #   mode: kubernetes
+    # cni:
+    #   exclusive: false
+    # l2announcements:
+    #   enabled: true
+    # externalIPs:
+    #   enabled: true
+    # socketLB: 
+    #   hostNamespaceOnly: true
+    # ingressController:
+    #   enabled: true
+    # gatewayAPI:
+    #   enabled: false
+EOF
+
+FILE="/var/lib/rancher/rke2/server/manifests/rke2-coredns-config.yaml"
+mkdir -p $(dirname $FILE)
+cat << EOF > $FILE 
+# $FILE
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: rke2-coredns
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    nodelocal:
       enabled: true
-    externalIPs:
-      enabled: true
-    socketLB: 
-      hostNamespaceOnly: true
-    ingressController:
-      enabled: true
-    gatewayAPI:
-      enabled: false
+      use_cilium_lrp: true
 EOF
 
 # FILE="/var/lib/rancher/rke2/server/manifests/rke2-multus-config.yaml"
@@ -73,11 +91,12 @@ cluster-cidr: 10.244.0.0/16
 service-cidr: 10.96.0.0/12
 node-ip: 10.84.158.1
 disable:
-  - disable-cloud-controller
-  - rke2-snapshot-controller
-  - rke2-snapshot-controller-crd
-  - rke2-snapshot-validation-webhook
-  - rke2-ingress-nginx
+  - rke2-coredns
+#   - disable-cloud-controller
+#   - rke2-snapshot-controller
+#   - rke2-snapshot-controller-crd
+#   - rke2-snapshot-validation-webhook
+#   - rke2-ingress-nginx
 EOF
 
 curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE=${INSTALL_RKE2_TYPE} INSTALL_RKE2_CHANNEL=${INSTALL_RKE2_VERSION} sh -

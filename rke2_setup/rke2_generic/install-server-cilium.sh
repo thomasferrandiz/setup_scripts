@@ -30,8 +30,7 @@ mkdir -p $(dirname $FILE)
 cat << EOF > $FILE 
 write-kubeconfig-mode: 644
 token: "secret"
-cni:
-  - cilium
+cni: cilium
 node-ip: 10.84.158.1
 EOF
 

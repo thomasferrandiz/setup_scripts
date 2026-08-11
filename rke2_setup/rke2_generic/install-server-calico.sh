@@ -25,6 +25,9 @@ metadata:
   namespace: kube-system
 spec:
   valuesContent: |-
+    installation:
+      calicoNetwork:
+        linuxDataplane: Nftables
     felixConfiguration:
       featureDetectOverride: "ChecksumOffloadBroken=false"
 EOF
@@ -35,6 +38,9 @@ cat << EOF > $FILE
 write-kubeconfig-mode: 644
 token: "secret"
 cni: ${CNI}
+node-ip: 10.84.158.1
+kube-proxy-arg:
+  - proxy-mode=nftables
 EOF
 
 curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE=${INSTALL_RKE2_TYPE} INSTALL_RKE2_CHANNEL=${INSTALL_RKE2_VERSION} sh -

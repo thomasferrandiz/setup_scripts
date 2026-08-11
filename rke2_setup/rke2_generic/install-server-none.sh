@@ -17,6 +17,8 @@ cat << EOF > $FILE
 write-kubeconfig-mode: 644
 token: "secret"
 cni: ${CNI}
+kube-proxy-arg:
+  - proxy-mode=nftables
 EOF
 
 curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE=${INSTALL_RKE2_TYPE} INSTALL_RKE2_CHANNEL=${INSTALL_RKE2_VERSION} sh -
