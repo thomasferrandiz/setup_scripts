@@ -114,7 +114,7 @@ applyTofu () {
   local sshFlavor=$2
   shift 2
   pushd "$dir" >/dev/null
-  tofu init -input=false >/dev/null
+  tofu init -input=false -upgrade >/dev/null
   tofu apply --auto-approve "$@"
   sleep 10
   tofu apply -refresh-only --auto-approve "$@"
@@ -126,7 +126,7 @@ applyTofu () {
 planTofu() {
   pushd "$1" >/dev/null
   shift
-  tofu init -input=false >/dev/null
+  tofu init -input=false -upgrade >/dev/null
   tofu plan "$@"
   popd >/dev/null
 }

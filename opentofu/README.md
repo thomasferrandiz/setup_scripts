@@ -7,7 +7,8 @@ flavors (k3s, RKE2, Rancher, kubeadm, ...) using cloud-init scripts.
 
 ```
 opentofu/
-├── infraup.sh              # entry point: pick a flavor, it runs tofu for you
+├── infraup.sh              # bring infrastructure up
+├── infradown.sh            # tear infrastructure down
 ├── aws/                    # base, variable-driven config (most flavors)
 │   ├── main.tf
 │   ├── variables.tf
@@ -88,6 +89,16 @@ modified in place. Append `multus` as a third argument to layer multus on top:
 ```sh
 ./infraup.sh rke2 cilium multus
 ```
+
+## Tearing down
+
+```sh
+./infradown.sh <flavor>
+```
+
+Accepts the same flavor names as `infraup.sh`. It runs `tofu destroy` with the
+correct number of placeholder entries for `cloud_init_files` so the state is
+cleanly destroyed without needing the original scripts on disk.
 
 ## Notes
 

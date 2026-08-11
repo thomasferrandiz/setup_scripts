@@ -109,8 +109,7 @@ resource "aws_instance" "myInstance" {
     volume_type = "standard"
   }
 
-  # Replaces the old %CLOUDINIT% placeholder.
-  user_data = filebase64(var.cloud_init_files[count.index])
+  user_data = fileexists(var.cloud_init_files[count.index]) ? filebase64(var.cloud_init_files[count.index]) : null
 
   tags = {
     Name = "tofu-tfz-vm${count.index}"
