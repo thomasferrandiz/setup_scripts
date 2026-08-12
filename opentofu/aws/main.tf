@@ -116,12 +116,13 @@ resource "aws_instance" "myInstance" {
     volume_type = "standard"
   }
 
-  user_data = fileexists(var.cloud_init_files[count.index]) ? base64encode(templatefile(
-    var.cloud_init_files[count.index],
-    {
-      server_ip = local.server_private_ip
+  user_data = fileexists(var.cloud_init_files[count.index]) ? base64encode(try(
+    templatefile(var.cloud_init_files[count.index], {
+      server_ip = count.index == 0 ? "" : local.server_private_ip
       token     = var.rke2_token
-    }
+      cni       = var.cni
+    }),
+    file(var.cloud_init_files[count.index])
   )) : null
 
   tags = {

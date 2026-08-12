@@ -33,6 +33,12 @@ variable "vpc_id" {
   description = "ID of an existing VPC (with an IPv6 CIDR) to attach the subnet to."
 }
 
+variable "cni" {
+  type        = string
+  description = "CNI plugin passed into the RKE2 server cloud-init template."
+  default     = "canal"
+}
+
 variable "rke2_token" {
   type        = string
   description = "Shared token for RKE2 server/agent join."

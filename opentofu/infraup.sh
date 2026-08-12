@@ -151,9 +151,9 @@ case $1 in
   "k3s-aws")
     echo "k3s option"
     files=$(hclList \
-      "../cloud-init-scripts/installK3s_0.sh" \
-      "../cloud-init-scripts/installK3s_1.sh" \
-      "../cloud-init-scripts/installK3s_2.sh")
+      "../cloud-init-scripts/k3s-server.sh" \
+      "../cloud-init-scripts/k3s-agent.sh" \
+      "../cloud-init-scripts/k3s-agent.sh")
     applyTofu "${AWS_DIR}" "" -var="cloud_init_files=${files}"
   ;;
   "kubeadm")
@@ -195,26 +195,19 @@ case $1 in
       echo "Multus included!"
       cniPlugin="$3,${cniPlugin}"
     fi
-    # Generate a copy of the server cloud-init with the requested CNI plugin,
-    # instead of editing the tracked script in place. The generated/ dir is
-    # gitignored.
-    mkdir -p cloud-init-scripts/generated
-    ${SED} "s/cni: .*/cni: ${cniPlugin}/g" \
-      cloud-init-scripts/installRKE2_0.sh \
-      > cloud-init-scripts/generated/installRKE2_0.sh
     files=$(hclList \
-      "../cloud-init-scripts/generated/installRKE2_0.sh" \
-      "../cloud-init-scripts/installRKE2_1.sh")
-    applyTofu "${AWS_DIR}" "" -var="cloud_init_files=${files}"
+      "../cloud-init-scripts/rke2-server.sh" \
+      "../cloud-init-scripts/rke2-agent.sh")
+    applyTofu "${AWS_DIR}" "" -var="cloud_init_files=${files}" -var="cni=${cniPlugin}"
   ;;
   "rke2-ha")
     echo "rke2 in HA mode"
     files=$(hclList \
-      "../cloud-init-scripts/installRKE2HA_0.sh" \
-      "../cloud-init-scripts/installRKE2HA_1.sh" \
-      "../cloud-init-scripts/installRKE2HA_2.sh" \
-      "../cloud-init-scripts/installRKE2HA_3.sh" \
-      "../cloud-init-scripts/installRKE2HA_4.sh")
+      "../cloud-init-scripts/rke2-server.sh" \
+      "../cloud-init-scripts/rke2-server.sh" \
+      "../cloud-init-scripts/rke2-server.sh" \
+      "../cloud-init-scripts/rke2-agent.sh" \
+      "../cloud-init-scripts/rke2-agent.sh")
     applyTofu "${AWS_DIR}" "HA" -var="cloud_init_files=${files}"
   ;;
   "demo-gpu")

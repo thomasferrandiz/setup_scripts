@@ -1,6 +1,4 @@
 #!/bin/bash
-
-#RKE2VERSION=v1.28.4+rke2r1
 apt update
 
 cat <<EOF > config.yaml
