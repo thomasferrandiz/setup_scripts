@@ -33,6 +33,23 @@ variable "vpc_id" {
   description = "ID of an existing VPC (with an IPv6 CIDR) to attach the subnet to."
 }
 
+variable "os" {
+  type        = string
+  description = "OS to deploy: ubuntu (dynamic latest 24.04 AMI) or sles16 (uses sles_ami)."
+  default     = "ubuntu"
+
+  validation {
+    condition     = contains(["ubuntu", "sles16"], var.os)
+    error_message = "os must be ubuntu or sles16."
+  }
+}
+
+variable "sles_ami" {
+  type        = string
+  description = "SLES 16 AMI ID; only used when os=sles16. Region-specific."
+  default     = "ami-0d2945b6b30408829"
+}
+
 variable "cni" {
   type        = string
   description = "CNI plugin passed into the RKE2 server cloud-init template."

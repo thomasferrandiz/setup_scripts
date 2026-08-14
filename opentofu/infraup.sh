@@ -221,9 +221,65 @@ case $1 in
       "../../cloud-init-scripts/cni-test/installRKE2_DP_1.sh")
     applyTofu "${AWS_CNI_DIR}" "cni-test" -var="cloud_init_files=${files}"
   ;;
+  "rke2-sles")
+    echo "rke2-sles option with cni plugin $2"
+    case $2 in
+      ""|"canal")
+        echo "CNI plugin is canal"
+        cniPlugin=canal
+      ;;
+      "calico")
+        echo "CNI plugin is calico"
+        cniPlugin=calico
+      ;;
+      "cilium")
+        echo "CNI plugin is cilium"
+        cniPlugin=cilium
+      ;;
+      "flannel")
+        echo "CNI plugin is flannel"
+        cniPlugin=flannel
+      ;;
+      "none")
+        echo "CNI plugin is none"
+        cniPlugin=none
+      ;;
+      *)
+        echo "$2 is not a valid CNI plugin"
+        exit 1
+      ;;
+    esac
+    if [ "$3" == "multus" ]; then
+      echo "Multus included!"
+      cniPlugin="$3,${cniPlugin}"
+    fi
+    files=$(hclList \
+      "../cloud-init-scripts/rke2-server-sles.sh" \
+      "../cloud-init-scripts/rke2-agent-sles.sh")
+    applyTofu "${AWS_DIR}" "" -var="cloud_init_files=${files}" -var="cni=${cniPlugin}" -var="os=sles16"
+  ;;
+  "rke2-ha-sles")
+    echo "rke2-ha-sles in HA mode"
+    files=$(hclList \
+      "../cloud-init-scripts/rke2-server-sles.sh" \
+      "../cloud-init-scripts/rke2-server-sles.sh" \
+      "../cloud-init-scripts/rke2-server-sles.sh" \
+      "../cloud-init-scripts/rke2-agent-sles.sh" \
+      "../cloud-init-scripts/rke2-agent-sles.sh")
+    applyTofu "${AWS_DIR}" "HA" -var="cloud_init_files=${files}" -var="os=sles16"
+  ;;
+  "k3s-sles")
+    echo "k3s-sles option"
+    files=$(hclList \
+      "../cloud-init-scripts/k3s-server-sles.sh" \
+      "../cloud-init-scripts/k3s-agent-sles.sh" \
+      "../cloud-init-scripts/k3s-agent-sles.sh")
+    applyTofu "${AWS_DIR}" "" -var="cloud_init_files=${files}" -var="os=sles16"
+  ;;
   *)
     echo "$0 executed without a valid arg."
     echo "Usage: $0 <flavor> [cni] [multus]"
     echo "Flavors: k3s-aws, rancher-aws, rancher-prime-aws, kubeadm, rke2, rke2-ha, demo-gpu, test-cni"
+    echo "        rke2-sles, rke2-ha-sles, k3s-sles"
     exit 1
 esac

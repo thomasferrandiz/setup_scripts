@@ -24,6 +24,21 @@ data "aws_vpc" "vpc" {
   id = var.vpc_id
 }
 
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"]
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-noble-24.04-amd64-server-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
 locals {
   server_private_ip = cidrhost(aws_subnet.dualStack-subnet.cidr_block, 10)
 }
@@ -99,7 +114,7 @@ resource "aws_instance" "myInstance" {
   # length of var.cloud_init_files (replaces the old %COUNT% placeholder).
   count = length(var.cloud_init_files)
 
-  ami           = "ami-03fd334507439f4d1"
+  ami           = var.os == "sles16" ? var.sles_ami : data.aws_ami.ubuntu.id
   instance_type = "t3.large"
 
   # index 0 is the server; give it a fixed IP so agents can join without discovery

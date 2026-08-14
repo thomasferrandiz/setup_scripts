@@ -24,13 +24,13 @@ destroyTofu() {
 }
 
 case $1 in
-  "rancher-aws"|"rancher-prime-aws"|"kubeadm"|"rke2")
+  "rancher-aws"|"rancher-prime-aws"|"kubeadm"|"rke2"|"rke2-sles")
     destroyTofu "${AWS_DIR}" 2
   ;;
-  "k3s-aws")
+  "k3s-aws"|"k3s-sles")
     destroyTofu "${AWS_DIR}" 3
   ;;
-  "rke2-ha")
+  "rke2-ha"|"rke2-ha-sles")
     destroyTofu "${AWS_DIR}" 5
   ;;
   "demo-gpu")
@@ -43,5 +43,6 @@ case $1 in
     echo "$0 executed without a valid arg."
     echo "Usage: $0 <flavor>"
     echo "Flavors: k3s-aws, rancher-aws, rancher-prime-aws, kubeadm, rke2, rke2-ha, demo-gpu, test-cni"
+    echo "        rke2-sles, rke2-ha-sles, k3s-sles"
     exit 1
 esac

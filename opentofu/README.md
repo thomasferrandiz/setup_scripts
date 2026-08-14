@@ -16,6 +16,11 @@ opentofu/
 │   ├── demo/               # demo-gpu variant (own VPC + GPU node)
 │   └── cni-test/           # test-cni variant (multus / dual CIDR)
 └── cloud-init-scripts/     # per-flavor bootstrap scripts
+    ├── rke2-server.sh      # RKE2 server (bootstrap or HA join)
+    ├── rke2-agent.sh       # RKE2 agent
+    ├── k3s-server.sh       # k3s server
+    ├── k3s-agent.sh        # k3s agent
+    └── *-sles.sh           # SLES 16 equivalents of the above
 ```
 
 Instead of copying a `.tf.template` and running `sed` on placeholders, each
@@ -52,14 +57,18 @@ cp aws/terraform.tfvars.example aws/terraform.tfvars
 
 Variables (base `aws/` config):
 
-| Variable           | Required | Default       | Notes                                        |
-| ------------------ | -------- | ------------- | -------------------------------------------- |
-| `region`           | no       | `eu-south-2`  | AWS region                                   |
-| `vpc_id`           | yes      | —             | Existing VPC with an IPv6 CIDR               |
-| `access_key`       | no       | `null`        | Falls back to the credential chain           |
-| `secret_key`       | no       | `null`        | Falls back to the credential chain           |
-| `token`            | no       | `null`        | Falls back to the credential chain           |
-| `cloud_init_files` | yes      | —             | One script per VM; normally set by infraup   |
+| Variable           | Required | Default                       | Notes                                        |
+| ------------------ | -------- | ----------------------------- | -------------------------------------------- |
+| `region`           | no       | `eu-south-2`                  | AWS region                                   |
+| `vpc_id`           | yes      | —                             | Existing VPC with an IPv6 CIDR               |
+| `access_key`       | no       | `null`                        | Falls back to the credential chain           |
+| `secret_key`       | no       | `null`                        | Falls back to the credential chain           |
+| `token`            | no       | `null`                        | Falls back to the credential chain           |
+| `cloud_init_files` | yes      | —                             | One script per VM; normally set by infraup   |
+| `os`               | no       | `ubuntu`                      | `ubuntu` or `sles16`                         |
+| `sles_ami`         | no       | `ami-0d2945b6b30408829`       | SLES 16 AMI ID (region-specific)             |
+| `cni`              | no       | `canal`                       | CNI plugin for RKE2; set by infraup.sh       |
+| `rke2_token`       | no       | `secret`                      | Shared join token                            |
 
 ## Usage
 
@@ -70,21 +79,22 @@ cd opentofu
 
 Available flavors:
 
-| Flavor              | Config        | VMs | Notes                                  |
-| ------------------- | ------------- | --- | -------------------------------------- |
-| `k3s-aws`           | `aws/`        | 3   | k3s                                    |
-| `rancher-aws`       | `aws/`        | 2   | k3s + Rancher                          |
-| `rancher-prime-aws` | `aws/`        | 2   | k3s + Rancher Prime                    |
-| `kubeadm`           | `aws/`        | 2   | kubeadm                                |
-| `rke2`              | `aws/`        | 2   | RKE2; 2nd arg = CNI, 3rd arg = `multus`|
-| `rke2-ha`           | `aws/`        | 5   | RKE2 in HA mode                        |
-| `demo-gpu`          | `aws/demo/`   | 3   | SUSECON demo + GPU node                |
-| `test-cni`          | `aws/cni-test`| 3   | CNI test with multus/secondary CIDR    |
+| Flavor              | OS     | Config         | VMs | Notes                                   |
+| ------------------- | ------ | -------------- | --- | --------------------------------------- |
+| `k3s-aws`           | Ubuntu | `aws/`         | 3   | k3s                                     |
+| `k3s-sles`          | SLES16 | `aws/`         | 3   | k3s on SLES 16                          |
+| `rancher-aws`       | Ubuntu | `aws/`         | 2   | k3s + Rancher                           |
+| `rancher-prime-aws` | Ubuntu | `aws/`         | 2   | k3s + Rancher Prime                     |
+| `kubeadm`           | Ubuntu | `aws/`         | 2   | kubeadm                                 |
+| `rke2`              | Ubuntu | `aws/`         | 2   | RKE2; 2nd arg = CNI, 3rd arg = `multus` |
+| `rke2-sles`         | SLES16 | `aws/`         | 2   | RKE2 on SLES 16; same CNI/multus args   |
+| `rke2-ha`           | Ubuntu | `aws/`         | 5   | RKE2 HA (3 servers + 2 agents)          |
+| `rke2-ha-sles`      | SLES16 | `aws/`         | 5   | RKE2 HA on SLES 16                      |
+| `test-cni`          | Ubuntu | `aws/cni-test` | 3   | CNI test with multus/secondary CIDR     |
 
-For `rke2`, the CNI plugin (`canal` (default), `calico`, `cilium`, `flannel`,
-`none`) is injected into a generated copy of `installRKE2_0.sh` under
-`cloud-init-scripts/generated/` (gitignored) — the tracked script is never
-modified in place. Append `multus` as a third argument to layer multus on top:
+The CNI plugin (`canal` (default), `calico`, `cilium`, `flannel`, `none`) is
+passed via `-var="cni=..."` — no file is generated or modified. Append `multus`
+as a third argument to layer multus on top:
 
 ```sh
 ./infraup.sh rke2 cilium multus
