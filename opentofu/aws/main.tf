@@ -136,6 +136,7 @@ resource "aws_instance" "myInstance" {
       server_ip = count.index == 0 ? "" : local.server_private_ip
       token     = var.rke2_token
       cni       = var.cni
+      utils_sh  = file("${path.module}/../cloud-init-scripts/utils.sh")
     }),
     file(var.cloud_init_files[count.index])
   )) : null
