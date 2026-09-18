@@ -131,6 +131,19 @@ planTofu() {
   popd >/dev/null
 }
 
+# copyManifests scps the aws/manifests directory to each given ssh host,
+# waiting for its ssh daemon to come up first (VMs may still be booting).
+copyManifests() {
+  local manifestsDir="${AWS_DIR}/manifests"
+  for host in "$@"; do
+    echo "Copying manifests to ${host}..."
+    until ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes "${host}" true 2>/dev/null; do
+      sleep 5
+    done
+    scp -r -o StrictHostKeyChecking=no "${manifestsDir}" "${host}:"
+  done
+}
+
 case $1 in
   "rancher-aws")
     echo "rancher-aws option"
@@ -199,6 +212,7 @@ case $1 in
       "../cloud-init-scripts/rke2-server.sh" \
       "../cloud-init-scripts/rke2-agent.sh")
     applyTofu "${AWS_DIR}" "" -var="cloud_init_files=${files}" -var="cni=${cniPlugin}"
+    copyManifests aws-ubuntu aws-ubuntu2
   ;;
   "rke2-ha")
     echo "rke2 in HA mode"
