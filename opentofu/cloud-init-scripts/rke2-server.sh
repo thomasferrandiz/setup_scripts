@@ -19,6 +19,22 @@ EOF
 mkdir -p /etc/rancher/rke2
 cp config.yaml /etc/rancher/rke2/config.yaml
 
+# multus must be first in the cni list; enable whereabouts IPAM when it's used
+if [[ "${cni}" == multus* ]]; then
+  mkdir -p /var/lib/rancher/rke2/server/manifests
+  cat <<EOF > /var/lib/rancher/rke2/server/manifests/rke2-multus-config.yaml
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: rke2-multus
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    rke2-whereabouts:
+      enabled: true
+EOF
+fi
+
 user=$(ls /home/)
 mv config.yaml /home/$${user}/config.yaml
 chown $${user}:$${user} /home/$${user}/config.yaml
