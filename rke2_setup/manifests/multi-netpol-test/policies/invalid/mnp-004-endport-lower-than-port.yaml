@@ -1,0 +1,23 @@
+# MNP-004: endPort lower than port. This cross-field constraint is
+# documented in the upstream NetworkPolicy semantics but is NOT expressible
+# in the CRD's structural OpenAPI schema (see scheme-multi-netpol.yaml), so
+# it may be silently accepted. Record which component (API server vs.
+# controller) actually rejects or ignores it, if any.
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: invalid-endport-lower-than-port
+  namespace: mnp-test-a
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: "mnp-test-a/test-net-a"
+spec:
+  podSelector:
+    matchLabels:
+      app: server
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8081
+          endPort: 8080

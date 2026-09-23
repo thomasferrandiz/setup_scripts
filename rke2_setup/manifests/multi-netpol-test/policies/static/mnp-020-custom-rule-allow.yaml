@@ -1,0 +1,28 @@
+# MNP-020: matches the custom nftables rule added to the
+# multi-networkpolicy-custom-v4-rules ConfigMap for TCP 9999
+# (see scripts/50-custom-rule-test.sh). Used to test the interaction
+# between MultiNetworkPolicy-generated rules and the controller's static
+# custom rule file: this policy denies all ingress except from app=client,
+# while the custom rule independently allows/blocks port 9999 regardless
+# of pod identity.
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: mnp-custom-rule-allow
+  namespace: mnp-test-a
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: "mnp-test-a/test-net-a"
+spec:
+  podSelector:
+    matchLabels:
+      app: server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: client
+      ports:
+        - protocol: TCP
+          port: 8080

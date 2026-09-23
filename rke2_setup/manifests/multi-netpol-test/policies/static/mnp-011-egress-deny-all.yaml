@@ -1,0 +1,15 @@
+# MNP-011: egress-only, no egress rules -> deny all egress on test-net-a
+# from pods labeled app=client.
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: mnp-egress-deny-all
+  namespace: mnp-test-a
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: "mnp-test-a/test-net-a"
+spec:
+  podSelector:
+    matchLabels:
+      app: client
+  policyTypes:
+    - Egress

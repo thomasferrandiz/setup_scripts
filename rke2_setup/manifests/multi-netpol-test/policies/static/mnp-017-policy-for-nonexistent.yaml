@@ -1,0 +1,17 @@
+# MNP-017: policy-for references a NetworkAttachmentDefinition that does
+# not exist. Expected: no interface is affected by this policy; the
+# controller should log a clear error/warning rather than fail silently or
+# affect an unrelated attachment.
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: mnp-policy-for-nonexistent
+  namespace: mnp-test-a
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: "mnp-test-a/does-not-exist"
+spec:
+  podSelector:
+    matchLabels:
+      app: server
+  policyTypes:
+    - Ingress

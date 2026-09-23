@@ -1,0 +1,18 @@
+---
+# Test namespaces for the MultiNetworkPolicy test plan.
+# mnp-test-a hosts the primary client/server workloads and both
+# NetworkAttachmentDefinitions. mnp-test-b hosts a pod in a differently
+# labeled namespace, used for namespaceSelector positive/negative cases.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mnp-test-a
+  labels:
+    mnp-test: "true"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mnp-test-b
+  labels:
+    mnp-test: "false"

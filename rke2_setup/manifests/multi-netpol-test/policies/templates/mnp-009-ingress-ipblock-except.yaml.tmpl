@@ -1,0 +1,30 @@
+# MNP-009: peers combined with logical OR - allow app=client via
+# podSelector OR any source in the test-net-a CIDR, EXCEPT the specific
+# /32 for client-b. Rendered at runtime by scripts/lib.sh
+# (render_policy_template) which substitutes __TESTNET_A_CIDR__ and
+# __CLIENT_B_IP__ with values discovered from topology.env.
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: mnp-ingress-ipblock-except
+  namespace: mnp-test-a
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: "mnp-test-a/test-net-a"
+spec:
+  podSelector:
+    matchLabels:
+      app: server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: client
+        - ipBlock:
+            cidr: __TESTNET_A_CIDR__
+            except:
+              - __CLIENT_B_IP__/32
+      ports:
+        - protocol: TCP
+          port: 8080

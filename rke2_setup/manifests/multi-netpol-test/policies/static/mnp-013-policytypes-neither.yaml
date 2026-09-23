@@ -1,0 +1,15 @@
+# MNP-013 variant 4: neither "ingress" nor "egress" present, policyTypes
+# omitted. Expected default: only Ingress is assumed to apply, and since
+# there is no ingress section, all ingress is denied; egress is unaffected
+# (allow-all, because Egress is not assumed unless explicitly requested).
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: mnp-policytypes-default-neither
+  namespace: mnp-test-a
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: "mnp-test-a/test-net-a"
+spec:
+  podSelector:
+    matchLabels:
+      app: server

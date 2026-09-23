@@ -1,0 +1,25 @@
+# MNP-012 (podSelector variant): allow egress from app=client to app=server
+# on TCP 8080 only. The ipBlock/endPort variant is a runtime-rendered
+# template (see policies/templates) because it needs the server's
+# dynamically assigned IP.
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: mnp-egress-allow-podselector
+  namespace: mnp-test-a
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: "mnp-test-a/test-net-a"
+spec:
+  podSelector:
+    matchLabels:
+      app: client
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: server
+      ports:
+        - protocol: TCP
+          port: 8080

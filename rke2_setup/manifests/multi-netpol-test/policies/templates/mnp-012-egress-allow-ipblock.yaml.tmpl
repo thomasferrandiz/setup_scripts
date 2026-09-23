@@ -1,0 +1,26 @@
+# MNP-012 (ipBlock variant): allow egress from app=client to the server's
+# test-net-a IP specifically (ipBlock /32) on TCP 8080-8081 via endPort.
+# Rendered at runtime by scripts/lib.sh (render_policy_template), which
+# substitutes __SERVER_IP_A__ with the value discovered from
+# topology.env.
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: mnp-egress-allow-ipblock
+  namespace: mnp-test-a
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: "mnp-test-a/test-net-a"
+spec:
+  podSelector:
+    matchLabels:
+      app: client
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: __SERVER_IP_A__/32
+      ports:
+        - protocol: TCP
+          port: 8080
+          endPort: 8081

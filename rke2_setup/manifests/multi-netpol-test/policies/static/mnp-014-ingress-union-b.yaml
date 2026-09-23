@@ -1,0 +1,25 @@
+# MNP-014 union test, policy B: permits app=client-b on TCP 8081 only.
+# Apply together with mnp-014-ingress-union-a.yaml. Both client (8080) and
+# client-b (8081) should succeed once both policies are applied, and each
+# should still be denied its non-permitted port.
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: mnp-union-b
+  namespace: mnp-test-a
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: "mnp-test-a/test-net-a"
+spec:
+  podSelector:
+    matchLabels:
+      app: server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: client-b
+      ports:
+        - protocol: TCP
+          port: 8081

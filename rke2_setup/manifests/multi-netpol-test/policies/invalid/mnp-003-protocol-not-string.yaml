@@ -1,0 +1,19 @@
+# MNP-003: protocol given as an integer instead of a string.
+# Expected: rejected by API admission (structural schema type mismatch).
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: invalid-protocol-not-string
+  namespace: mnp-test-a
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: "mnp-test-a/test-net-a"
+spec:
+  podSelector:
+    matchLabels:
+      app: server
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: 6
+          port: 8080

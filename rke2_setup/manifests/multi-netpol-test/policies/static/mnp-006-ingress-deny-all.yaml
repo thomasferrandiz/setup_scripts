@@ -1,0 +1,15 @@
+# MNP-006: ingress-only, no ingress rules -> deny all ingress on test-net-a
+# to pods labeled app=server.
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: mnp-ingress-deny-all
+  namespace: mnp-test-a
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: "mnp-test-a/test-net-a"
+spec:
+  podSelector:
+    matchLabels:
+      app: server
+  policyTypes:
+    - Ingress

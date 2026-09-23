@@ -1,0 +1,205 @@
+---
+# All four pods in this file run the identical listener block below, so
+# any pod can act as either the source or the destination of a check (this
+# is required for egress-direction tests, which need a reachable listener
+# on the peer being connected *to*). Listens on:
+#   8080/TCP named "http"     - canned HTTP 200 response
+#   8081/TCP named "alt-tcp"  - plain "ok" banner
+#   8080/UDP named "http-udp" - single-datagram "ok" echo
+#
+# Server pod: attached to both test networks so the same pod can be used to
+# prove that a policy scoped to test-net-a does not affect test-net-b or the
+# primary network.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: server
+  namespace: mnp-test-a
+  labels:
+    app: server
+    role: server
+  annotations:
+    k8s.v1.cni.cncf.io/networks: test-net-a, test-net-b
+spec:
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: role
+                  operator: In
+                  values: ["client"]
+            topologyKey: kubernetes.io/hostname
+  containers:
+    - name: network-multitool
+      image: wbitt/network-multitool:extra
+      imagePullPolicy: Always
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          socat -T2 TCP-LISTEN:8080,reuseaddr,fork \
+            SYSTEM:'printf "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nok\n"' &
+          socat -T2 TCP-LISTEN:8081,reuseaddr,fork SYSTEM:'printf "ok\n"' &
+          socat -T2 UDP-LISTEN:8080,reuseaddr,fork SYSTEM:'printf "ok\n"' &
+          wait
+      ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        - name: alt-tcp
+          containerPort: 8081
+          protocol: TCP
+        - name: http-udp
+          containerPort: 8080
+          protocol: UDP
+      readinessProbe:
+        tcpSocket:
+          port: 8080
+        initialDelaySeconds: 2
+        periodSeconds: 5
+      securityContext:
+        runAsUser: 0
+        capabilities:
+          add: ["NET_ADMIN", "NET_RAW"]
+---
+# Primary allowed client: app=client is the label most "allow" policies
+# select on. Attached to both networks like the server, to exercise
+# isolation checks from the client side too. Also runs the shared listener
+# block (see top of file) so it can serve as an egress-check destination.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: client
+  namespace: mnp-test-a
+  labels:
+    app: client
+    role: client
+  annotations:
+    k8s.v1.cni.cncf.io/networks: test-net-a, test-net-b
+spec:
+  containers:
+    - name: network-multitool
+      image: wbitt/network-multitool:extra
+      imagePullPolicy: Always
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          socat -T2 TCP-LISTEN:8080,reuseaddr,fork \
+            SYSTEM:'printf "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nok\n"' &
+          socat -T2 TCP-LISTEN:8081,reuseaddr,fork SYSTEM:'printf "ok\n"' &
+          socat -T2 UDP-LISTEN:8080,reuseaddr,fork SYSTEM:'printf "ok\n"' &
+          wait
+      ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        - name: alt-tcp
+          containerPort: 8081
+          protocol: TCP
+        - name: http-udp
+          containerPort: 8080
+          protocol: UDP
+      readinessProbe:
+        tcpSocket:
+          port: 8080
+        initialDelaySeconds: 2
+        periodSeconds: 5
+      securityContext:
+        runAsUser: 0
+        capabilities:
+          add: ["NET_ADMIN", "NET_RAW"]
+---
+# Differently labeled client, same namespace: used as the negative control
+# for podSelector-based allow rules (e.g. MNP-007) - it must stay denied
+# while app=client succeeds. Also runs the shared listener block.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: client-b
+  namespace: mnp-test-a
+  labels:
+    app: client-b
+    role: client
+  annotations:
+    k8s.v1.cni.cncf.io/networks: test-net-a
+spec:
+  containers:
+    - name: network-multitool
+      image: wbitt/network-multitool:extra
+      imagePullPolicy: Always
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          socat -T2 TCP-LISTEN:8080,reuseaddr,fork \
+            SYSTEM:'printf "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nok\n"' &
+          socat -T2 TCP-LISTEN:8081,reuseaddr,fork SYSTEM:'printf "ok\n"' &
+          socat -T2 UDP-LISTEN:8080,reuseaddr,fork SYSTEM:'printf "ok\n"' &
+          wait
+      ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        - name: alt-tcp
+          containerPort: 8081
+          protocol: TCP
+        - name: http-udp
+          containerPort: 8080
+          protocol: UDP
+      readinessProbe:
+        tcpSocket:
+          port: 8080
+        initialDelaySeconds: 2
+        periodSeconds: 5
+      securityContext:
+        runAsUser: 0
+        capabilities:
+          add: ["NET_ADMIN", "NET_RAW"]
+---
+# Client in the differently labeled namespace (mnp-test-b), attached to
+# test-net-a via the cross-namespace "namespace/name" network reference.
+# Used for namespaceSelector positive/negative cases (MNP-008, MNP-015).
+# Also runs the shared listener block.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: client-other-ns
+  namespace: mnp-test-b
+  labels:
+    app: client
+    role: client
+  annotations:
+    k8s.v1.cni.cncf.io/networks: mnp-test-a/test-net-a
+spec:
+  containers:
+    - name: network-multitool
+      image: wbitt/network-multitool:extra
+      imagePullPolicy: Always
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          socat -T2 TCP-LISTEN:8080,reuseaddr,fork \
+            SYSTEM:'printf "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nok\n"' &
+          socat -T2 TCP-LISTEN:8081,reuseaddr,fork SYSTEM:'printf "ok\n"' &
+          socat -T2 UDP-LISTEN:8080,reuseaddr,fork SYSTEM:'printf "ok\n"' &
+          wait
+      ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        - name: alt-tcp
+          containerPort: 8081
+          protocol: TCP
+        - name: http-udp
+          containerPort: 8080
+          protocol: UDP
+      readinessProbe:
+        tcpSocket:
+          port: 8080
+        initialDelaySeconds: 2
+        periodSeconds: 5
+      securityContext:
+        runAsUser: 0
+        capabilities:
+          add: ["NET_ADMIN", "NET_RAW"]

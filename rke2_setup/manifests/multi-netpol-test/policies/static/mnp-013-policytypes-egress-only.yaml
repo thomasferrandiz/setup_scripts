@@ -1,0 +1,24 @@
+# MNP-013 variant 2: only "egress" present, policyTypes omitted.
+# Expected default: because an egress section exists, both Egress AND
+# Ingress are assumed to apply per the CRD description - even though no
+# ingress section is present, this should still deny all ingress to the
+# selected pods. This is the case most likely to surprise users.
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: mnp-policytypes-default-egress-only
+  namespace: mnp-test-a
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: "mnp-test-a/test-net-a"
+spec:
+  podSelector:
+    matchLabels:
+      app: client
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: server
+      ports:
+        - protocol: TCP
+          port: 8080

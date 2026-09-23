@@ -1,0 +1,12 @@
+# MNP-002: missing the required spec.podSelector field.
+# Expected: rejected by API admission ("podSelector: Required value").
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: invalid-missing-podselector
+  namespace: mnp-test-a
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: "mnp-test-a/test-net-a"
+spec:
+  policyTypes:
+    - Ingress

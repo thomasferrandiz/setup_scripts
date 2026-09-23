@@ -1,0 +1,17 @@
+# MNP-017: an explicit, correctly-spelled policy-for annotation targeting
+# test-net-a. Used as the positive control for the isolation check - only
+# test-net-a traffic should be affected, never the primary network or
+# test-net-b.
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: mnp-policy-for-test-net-a
+  namespace: mnp-test-a
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: "mnp-test-a/test-net-a"
+spec:
+  podSelector:
+    matchLabels:
+      app: server
+  policyTypes:
+    - Ingress

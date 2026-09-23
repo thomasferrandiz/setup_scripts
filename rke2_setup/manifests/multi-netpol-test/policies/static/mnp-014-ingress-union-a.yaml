@@ -1,0 +1,25 @@
+# MNP-014 union test, policy A: permits app=client on TCP 8080 only.
+# Apply together with mnp-014-ingress-union-b.yaml (both select app=server)
+# to prove that MultiNetworkPolicy allow-rules union rather than override
+# each other.
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: mnp-union-a
+  namespace: mnp-test-a
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: "mnp-test-a/test-net-a"
+spec:
+  podSelector:
+    matchLabels:
+      app: server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: client
+      ports:
+        - protocol: TCP
+          port: 8080

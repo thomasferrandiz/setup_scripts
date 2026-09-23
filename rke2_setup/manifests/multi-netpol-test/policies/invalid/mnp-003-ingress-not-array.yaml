@@ -1,0 +1,16 @@
+# MNP-003: ingress is a string instead of an array.
+# Expected: rejected by API admission (structural schema type mismatch).
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: invalid-ingress-not-array
+  namespace: mnp-test-a
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: "mnp-test-a/test-net-a"
+spec:
+  podSelector:
+    matchLabels:
+      app: server
+  policyTypes:
+    - Ingress
+  ingress: "not-an-array"

@@ -1,0 +1,39 @@
+# MNP-010: port-matching coverage in a single policy - named port "http",
+# a numeric TCP range 8080-8081 via endPort, and UDP 8080. Allows from any
+# source so the port/protocol matrix, not source matching, is under test.
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: mnp-ingress-ports
+  namespace: mnp-test-a
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: "mnp-test-a/test-net-a"
+spec:
+  podSelector:
+    matchLabels:
+      app: server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: client
+      ports:
+        - protocol: TCP
+          port: http
+    - from:
+        - podSelector:
+            matchLabels:
+              app: client
+      ports:
+        - protocol: TCP
+          port: 8080
+          endPort: 8081
+    - from:
+        - podSelector:
+            matchLabels:
+              app: client
+      ports:
+        - protocol: UDP
+          port: 8080

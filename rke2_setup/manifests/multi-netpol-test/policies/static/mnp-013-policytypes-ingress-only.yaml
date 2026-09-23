@@ -1,0 +1,22 @@
+# MNP-013 variant 1: only "ingress" present, policyTypes omitted.
+# Expected default: Ingress is enforced using the rule below; egress is
+# unaffected (defaults to allow-all, since no egress section is present).
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: mnp-policytypes-default-ingress-only
+  namespace: mnp-test-a
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: "mnp-test-a/test-net-a"
+spec:
+  podSelector:
+    matchLabels:
+      app: server
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: client
+      ports:
+        - protocol: TCP
+          port: 8080

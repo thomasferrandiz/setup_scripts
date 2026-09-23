@@ -1,0 +1,18 @@
+# MNP-003: ipBlock without the required cidr field.
+# Expected: rejected by API admission ("cidr: Required value").
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: invalid-ipblock-missing-cidr
+  namespace: mnp-test-a
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: "mnp-test-a/test-net-a"
+spec:
+  podSelector:
+    matchLabels:
+      app: server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - ipBlock: {}

@@ -1,0 +1,29 @@
+# MNP-008: allow ingress to app=server on TCP 8080 only from pods labeled
+# app=client that also live in a namespace labeled mnp-test=true.
+# client (mnp-test-a, mnp-test=true) must succeed; client-other-ns
+# (mnp-test-b, mnp-test=false by default) must be denied until MNP-015
+# flips the mnp-test-b namespace label.
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: mnp-ingress-allow-ns-and-pod
+  namespace: mnp-test-a
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: "mnp-test-a/test-net-a"
+spec:
+  podSelector:
+    matchLabels:
+      app: server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              mnp-test: "true"
+          podSelector:
+            matchLabels:
+              app: client
+      ports:
+        - protocol: TCP
+          port: 8080
