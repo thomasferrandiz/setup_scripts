@@ -31,7 +31,7 @@ RECONCILE_POLL_INTERVAL="${RECONCILE_POLL_INTERVAL:-3}"
 # behavior. A short flat sleep plus back-to-back repeat_check attempts
 # wasn't enough to catch this: all retries landed inside the same stale
 # window and agreed on the wrong answer instead of surfacing as "flaky".
-RECONCILE_SETTLE_WAIT="${RECONCILE_SETTLE_WAIT:-8}"
+RECONCILE_SETTLE_WAIT="${RECONCILE_SETTLE_WAIT:-20}"
 # Delay between repeat_check attempts, so retries are spread over real
 # wall-clock time instead of firing back-to-back within the same instant -
 # see RECONCILE_SETTLE_WAIT above for why that matters.
@@ -233,8 +233,21 @@ udp_check() {
 # Runs the given check function CHECK_RETRIES times and returns "allow"
 # only if every attempt agreed. Prints "flaky" if attempts disagreed
 # (worth a manual look) otherwise the agreed result.
+#
+# Before those attempts, fires one throwaway warm-up call for the exact
+# same flow and discards its result. A deny check run soon after an
+# allowed flow to the same destination (e.g. a deny-all case right after
+# the MNP-005 baseline) can intermittently ride a leftover conntrack
+# "established" entry through the target pod's `ct state
+# established,related accept` rule and come back "allow" even though the
+# policy is enforced correctly - confirmed on a live cluster where the
+# first probe after applying a deny-all policy returned "allow" and every
+# probe after that returned "deny" with no other change. One discarded
+# probe consumes that stale state (or a real, correctly-denied attempt if
+# there was none) so the counted attempts below start from a clean state.
 repeat_check() {
   local func="$1"; shift
+  "${func}" "$@" >/dev/null
   local results=() r
   for ((i = 0; i < CHECK_RETRIES; i++)); do
     r="$("${func}" "$@")"
