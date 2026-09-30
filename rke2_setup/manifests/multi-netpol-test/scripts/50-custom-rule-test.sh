@@ -10,15 +10,24 @@ load_topology
 
 CM_NAME="multi-networkpolicy-custom-v4-rules"
 CM_NS="kube-system"
-BACKUP_FILE="${RESULTS_DIR}/${CM_NAME}.backup.yaml"
+BACKUP_FILE="${RESULTS_DIR}/${CM_NAME}.backup.json"
 
 log "MNP-020: backing up ${CM_NAME}"
-kubectl get configmap -n "${CM_NS}" "${CM_NAME}" -o yaml > "${BACKUP_FILE}"
+kubectl get configmap -n "${CM_NS}" "${CM_NAME}" -o json > "${BACKUP_FILE}"
 info "backup saved to ${BACKUP_FILE}"
 
+# Restore only the "data" field via a merge patch (built from the backed-up
+# data with jq) instead of `kubectl apply -f` on the full backed-up object.
+# The full object carries the resourceVersion captured at backup time, and
+# `kubectl apply` includes it when computing the merge patch - since our own
+# patch below always advances the ConfigMap's resourceVersion, that apply
+# would always be rejected as a 409 Conflict ("the object has been
+# modified"), leaving the custom rule live on the cluster instead of being
+# restored. Patching just "data" sidesteps resourceVersion entirely.
 restore_configmap() {
   info "restoring original ${CM_NAME}"
-  kubectl apply -f "${BACKUP_FILE}" >/dev/null
+  kubectl patch configmap -n "${CM_NS}" "${CM_NAME}" --type merge -p \
+    "{\"data\":$(jq -c '.data' "${BACKUP_FILE}")}"
   kubectl rollout restart daemonset/multi-networkpolicy-nftables -n "${CM_NS}" >/dev/null
   kubectl rollout status -n "${CM_NS}" daemonset/multi-networkpolicy-nftables --timeout=180s >/dev/null
 }
@@ -36,7 +45,15 @@ kubectl exec -n mnp-test-a server -- sh -c \
   "nohup socat -T2 TCP-LISTEN:9999,reuseaddr,fork SYSTEM:'printf \"ok\\n\"' >/tmp/9999.log 2>&1 &"
 sleep 2
 
-assert "no MultiNetworkPolicy present, custom rule blocks TCP 9999" deny "$(repeat_check tcp_check mnp-test-a client "${SERVER_IP_A}" 9999)"
+# Custom ConfigMap rules are only ever programmed into a pod's nftables
+# chains as a side effect of that pod being matched by at least one
+# MultiNetworkPolicy (ensureBasicStructure/createCommonRules only run from
+# inside enforcePolicy, after the pod-selector match check - the controller
+# never proactively syncs common rules to unmatched pods). With no policy
+# selecting "server" yet, TCP 9999 is correctly wide open here; the
+# meaningful "does the custom rule still apply" check happens below, once a
+# policy is present.
+assert "no MultiNetworkPolicy present, TCP 9999 is open (custom rule only applies to policy-matched pods)" allow "$(repeat_check tcp_check mnp-test-a client "${SERVER_IP_A}" 9999)"
 assert "no MultiNetworkPolicy present, TCP 8080 is still open (custom rule is port-specific)" allow "$(repeat_check tcp_check mnp-test-a client "${SERVER_IP_A}" 8080)"
 
 log "Applying mnp-020-custom-rule-allow.yaml (allows only TCP 8080 from app=client)"
