@@ -20,6 +20,7 @@ CHECK_RETRIES="${CHECK_RETRIES:-3}"     # repeat each flow check this many times
 # comment on wait_reconcile below for why this matters.
 CONTROLLER_NAMESPACE="${CONTROLLER_NAMESPACE:-kube-system}"
 CONTROLLER_LABEL_SELECTOR="${CONTROLLER_LABEL_SELECTOR:-name=multi-networkpolicy-nftables}"
+CONTROLLER_LABEL_SELECTOR_ALT="${CONTROLLER_LABEL_SELECTOR_ALT:-app=rke2-multus-mnp}"
 CONTROLLER_CONTAINER="${CONTROLLER_CONTAINER:-multi-networkpolicy-nftables}"
 RECONCILE_TIMEOUT="${RECONCILE_TIMEOUT:-45}"      # max seconds to wait for confirmed reconciliation
 RECONCILE_POLL_INTERVAL="${RECONCILE_POLL_INTERVAL:-3}"
@@ -157,11 +158,15 @@ _wait_for_reconcile_confirmation() {
   local start_ts elapsed=0
   start_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-  local pods
+  local pods pods_alt
   pods="$(kubectl -n "${CONTROLLER_NAMESPACE}" get pods -l "${CONTROLLER_LABEL_SELECTOR}" \
     -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)"
+  pods_alt="$(kubectl -n "${CONTROLLER_NAMESPACE}" get pods -l "${CONTROLLER_LABEL_SELECTOR_ALT}" \
+    -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)"
+  pods="$(printf '%s\n%s\n' "${pods}" "${pods_alt}" | tr ' ' '\n' | sed '/^$/d' | sort -u | tr '\n' ' ')"
+  pods="${pods% }"
   if [[ -z "${pods}" ]]; then
-    info "could not find controller pods (label ${CONTROLLER_LABEL_SELECTOR} in ${CONTROLLER_NAMESPACE}); falling back to ${RECONCILE_WAIT}s sleep"
+    info "could not find controller pods (labels ${CONTROLLER_LABEL_SELECTOR} or ${CONTROLLER_LABEL_SELECTOR_ALT} in ${CONTROLLER_NAMESPACE}); falling back to ${RECONCILE_WAIT}s sleep"
     sleep "${RECONCILE_WAIT}"
     return 0
   fi
