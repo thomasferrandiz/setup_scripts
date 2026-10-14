@@ -16,3 +16,11 @@ azure/azure.tf
 azure/terraform*
 azure/existing/terraform*
 opentofu/aws/.terraform.tfstate.lock.info
+# Harvester credentials, cloud-init credentials, and local OpenTofu artifacts.
+opentofu/harvester/local.yaml
+opentofu/harvester/cloud-config.yml
+opentofu/harvester/.terraform/
+opentofu/harvester/terraform.tfstate*
+opentofu/harvester/.terraform.tfstate.lock.info
+opentofu/harvester/*.tfplan
+opentofu/harvester/.terraform.lock.hcl

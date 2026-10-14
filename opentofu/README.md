@@ -2,6 +2,87 @@
 
 This folder provisions throwaway AWS VMs for trying out different Kubernetes
 flavors (k3s, RKE2, Rancher, kubeadm, ...) using cloud-init scripts.
+It also includes a standalone [Harvester configuration](harvester/main.tf).
+
+## Harvester VMs
+
+The `harvester/` configuration uses `harvester/harvester` 1.9.0 to create
+`default/bench-cp-01`, `default/bench-cp-02`, and `default/bench-cp-03`.
+Each VM has 8 vCPUs, 16 GiB RAM, a 40 GiB virtio boot disk cloned from
+`default/image-x49tz`, a virtio bridge interface on `default/vm-net`, a USB
+tablet, the q35 machine type, and the `RerunOnFailure` run strategy.
+Resource requests match the manifest: 500m CPU and 16 GiB memory. A node
+selector requires `network.harvesterhci.io/cluster-net=true`, equivalent
+to the manifest's required single-value node affinity.
+The image, its `longhorn-image-x49tz` storage class, network, and
+`default/tferrandiz` SSH key must already exist.
+
+Save the Harvester kubeconfig as `harvester/local.yaml` (its current context
+is used), and the cloud-init user data as `harvester/cloud-config.yml`.
+Both files are ignored by Git because they contain credentials. All three VMs use
+the provided cloud-init file (including the guest agent, Docker, and SSH
+access); it must not contain a shared static IP or fixed hostname. Each VM
+gets a new boot volume named `<vm-name>-disk-0`.
+
+With OpenTofu or Terraform >= 1.5:
+
+```sh
+cd opentofu/harvester
+tofu init -upgrade
+tofu plan -out=harvester.tfplan
+# Review the plan before applying.
+tofu apply harvester.tfplan
+```
+
+Expect three new VMs and no imports. The VM names and boot-volume names
+must be available in the `default` namespace; if the example VM still
+exists, choose unused names in `for_each` before applying.
+`prevent_destroy` protects the VMs against planned destruction/replacement.
+Disks have `auto_delete = false`, so their data is retained if a VM is
+subsequently deleted outside OpenTofu.
+
+Provider 1.9.0 still does not expose the manifest's custom `bench-cp` pod
+anti-affinity, 120-second termination grace period, or
+`LiveMigrateIfPossible` eviction strategy. New VMs use provider/Harvester
+defaults for those settings, so this is not an exact YAML reproduction.
+The manifest's preferred anti-affinity would only encourage placement on
+different hosts, not guarantee it; the provider cannot reproduce that
+specific preference.
+
+Cloud-init contents (including password hashes) are stored in local state
+and saved plans even when marked sensitive. Protect those files; they are
+ignored by Git. The AWS wrapper scripts do not manage this configuration.
+
+### TLS hostname mismatch in test environments
+
+The Harvester provider honors the kubeconfig's `insecure-skip-tls-verify`
+setting. To bypass a TLS hostname mismatch in a trusted test environment,
+add it to the relevant cluster in `harvester/local.yaml`:
+
+```yaml
+clusters:
+  - name: your-cluster
+    cluster:
+      server: https://your-harvester-endpoint
+      insecure-skip-tls-verify: true
+```
+
+Keep the existing server URL, cluster name, credentials, and contexts.
+Remove `certificate-authority` or `certificate-authority-data` from that
+same cluster block if present. Regenerate and review the plan before applying:
+
+```sh
+tofu -chdir=harvester plan -out=harvester.tfplan
+tofu -chdir=harvester apply harvester.tfplan
+```
+
+Run these commands from `opentofu/`.
+
+**Warning:** this disables both certificate-chain and hostname verification,
+exposing the connection and credentials to impersonation attacks. Use it
+only for a trusted test environment. Fixing the endpoint's certificate to
+match its hostname and using a trusted CA is preferable; once fixed,
+remove the insecure setting and restore the CA configuration if required.
 
 ## Layout
 
