@@ -2,7 +2,8 @@
 set -euo pipefail
 
 config_file=/etc/rancher/rke2/config.yaml
-node_name=$(hostname --static)
+node_name=$(awk '$1 == "node-name:" { print $2 }' "$config_file")
+node_name=${node_name:-$(hostname)}
 
 zypper --non-interactive refresh
 zypper --non-interactive install -y curl
@@ -51,6 +52,19 @@ if grep -q '^server:' "$config_file"; then
     exit 1
   fi
 fi
+
+cat >> /home/opensuse/.profile <<'EOF'
+export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+export PATH=$PATH:/var/lib/rancher/rke2/bin/
+alias k=kubectl
+EOF
+
+# k9s via tarball (no .deb on SLES)
+curl -fsSL --retry 5 --retry-delay 5 --retry-connrefused \
+  https://github.com/derailed/k9s/releases/download/v0.51.0/k9s_Linux_amd64.tar.gz \
+  -o /tmp/k9s_Linux_amd64.tar.gz
+tar -xzf /tmp/k9s_Linux_amd64.tar.gz -C /usr/local/bin k9s
+rm /tmp/k9s_Linux_amd64.tar.gz
 
 curl -fsSL --retry 3 --retry-delay 5 https://get.rke2.io -o /tmp/install-rke2.sh
 env INSTALL_RKE2_CHANNEL=stable bash /tmp/install-rke2.sh
