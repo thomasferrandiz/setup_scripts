@@ -3,14 +3,18 @@
 The cloud-init configuration installs RKE2 server services on `bench-cp-01`,
 `bench-cp-02`, and `bench-cp-03`. Each Harvester VirtualMachine carries the
 label `node-role=control-plane` (set on the VM object, not as an RKE2/Kubernetes
-node label). The first VM bootstraps the cluster; the other two
-join it through the load balancer. Cloud-init writes the RKE2 config and
-bootstrap script, then runs that script after enabling the guest services.
+node label). `bench-cp-01` bootstraps the cluster; `bench-cp-02` and
+`bench-cp-03` join it directly at `https://<bench-cp-01 IP>:9345`. Cloud-init
+writes the RKE2 config and bootstrap script, then runs that script after
+enabling the guest services.
 
-The VMs connect to `default/vm-net-2085`. The load balancer at
-`10.113.75.205` (`rke2_api_endpoint`) must forward TCP ports **6443** and
-**9345** to all three VM addresses. Change the variable in `main.tf` if the
-address changes. Use the `virtual_machines` output to obtain the VM addresses.
+The VMs connect to `default/vm-net-2085`. The Harvester load balancer cannot
+reach backends on this isolated network, so joining servers do not use it.
+`bench-cp-01` is a separate resource with `wait_for_lease = true`: OpenTofu
+waits for its DHCP address before rendering the joining servers' cloud-init.
+If `bench-cp-01` is recreated and gets a new address, the existing joining
+servers keep the old one and must be updated or recreated. Use the
+`virtual_machines` output to obtain the VM addresses.
 
 The standalone `bench-net-01` VM has 1 CPU, 2 GiB RAM, a 20 GiB disk using the
 same base image, with its main interface on `default/vm-net` and its secondary

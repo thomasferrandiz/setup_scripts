@@ -18,34 +18,121 @@ provider "harvester" {
 
 provider "random" {}
 
-variable "rke2_api_endpoint" {
-  description = "Stable IPv4 load balancer address forwarding TCP ports 6443 and 9345 to all RKE2 server VMs."
-  type        = string
-  default     = "10.113.75.205"
-}
-
 resource "random_password" "rke2_token" {
   length  = 48
   special = false
 }
 
-resource "harvester_cloudinit_secret" "bench" {
-  for_each = toset(["bench-cp-01", "bench-cp-02", "bench-cp-03"])
+locals {
+  rke2_bootstrap_node = "bench-cp-01"
+  rke2_joining_nodes  = toset(["bench-cp-02", "bench-cp-03"])
 
-  name      = "${each.key}-cloudinit"
-  namespace = "default"
-  user_data = sensitive(templatefile("${path.module}/cloud-config.yml", {
-    node_name          = each.key
-    is_bootstrap       = each.key == "bench-cp-01"
-    api_endpoint       = var.rke2_api_endpoint
+  # Joining servers register directly with the bootstrap server: the Harvester
+  # load balancer cannot reach backends on the isolated vm-net-2085 network.
+  rke2_bootstrap_ip = harvester_virtualmachine.bench_bootstrap.network_interface[0].ip_address
+
+  rke2_cloud_config_vars = {
     rke2_token         = random_password.rke2_token.result
     rke2_server_script = file("${path.module}/rke2-server-sles.sh")
     bench_public_key   = trimspace(file("${path.module}/bench.key.pub"))
-  }))
+  }
+}
+
+moved {
+  from = harvester_cloudinit_secret.bench["bench-cp-01"]
+  to   = harvester_cloudinit_secret.bench_bootstrap
+}
+
+moved {
+  from = harvester_virtualmachine.bench["bench-cp-01"]
+  to   = harvester_virtualmachine.bench_bootstrap
+}
+
+resource "harvester_cloudinit_secret" "bench_bootstrap" {
+  name      = "${local.rke2_bootstrap_node}-cloudinit"
+  namespace = "default"
+  user_data = sensitive(templatefile("${path.module}/cloud-config.yml", merge(local.rke2_cloud_config_vars, {
+    node_name      = local.rke2_bootstrap_node
+    server_address = ""
+  })))
+}
+
+resource "harvester_cloudinit_secret" "bench" {
+  for_each = local.rke2_joining_nodes
+
+  name      = "${each.key}-cloudinit"
+  namespace = "default"
+  user_data = sensitive(templatefile("${path.module}/cloud-config.yml", merge(local.rke2_cloud_config_vars, {
+    node_name      = each.key
+    server_address = local.rke2_bootstrap_ip
+  })))
+
+  lifecycle {
+    precondition {
+      condition     = local.rke2_bootstrap_ip != null && local.rke2_bootstrap_ip != ""
+      error_message = "${local.rke2_bootstrap_node} has no IP address; joining servers need it as their RKE2 server address."
+    }
+  }
+}
+
+resource "harvester_virtualmachine" "bench_bootstrap" {
+  name      = local.rke2_bootstrap_node
+  namespace = "default"
+  labels = {
+    "node-role" = "control-plane"
+  }
+  cpu          = 8
+  memory       = "16Gi"
+  machine_type = "q35"
+  run_strategy = "RerunOnFailure"
+  ssh_keys     = ["default/tferrandiz"]
+
+  node_selector = {
+    "network.harvesterhci.io/cluster-net" = "true"
+  }
+
+  requests {
+    cpu    = "500m"
+    memory = "16Gi"
+  }
+
+  network_interface {
+    name         = "default"
+    network_name = "default/vm-net-2085"
+    model        = "virtio"
+    type         = "bridge"
+    # Creation waits for the DHCP address the joining servers connect to.
+    wait_for_lease = true
+  }
+
+  disk {
+    name               = "disk-0"
+    type               = "disk"
+    size               = "40Gi"
+    bus                = "virtio"
+    boot_order         = 1
+    image              = "default/image-x49tz"
+    storage_class_name = "longhorn-image-x49tz"
+    access_mode        = "ReadWriteMany"
+    volume_mode        = "Block"
+    volume_name        = "${local.rke2_bootstrap_node}-disk-0"
+    auto_delete        = true
+  }
+
+  input {
+    name = "tablet"
+    type = "tablet"
+    bus  = "usb"
+  }
+
+  cloudinit {
+    type                  = "noCloud"
+    user_data_secret_name = harvester_cloudinit_secret.bench_bootstrap.name
+  }
 }
 
 resource "harvester_virtualmachine" "bench" {
-  for_each = toset(["bench-cp-01", "bench-cp-02", "bench-cp-03"])
+  for_each = local.rke2_joining_nodes
 
   name      = each.key
   namespace = "default"
@@ -234,7 +321,10 @@ output "virtual_machines" {
   description = "Harvester VM IDs, runtime states, and assigned hosts."
   value = merge(
     {
-      for name, vm in harvester_virtualmachine.bench : name => {
+      for name, vm in merge(
+        { (local.rke2_bootstrap_node) = harvester_virtualmachine.bench_bootstrap },
+        harvester_virtualmachine.bench
+        ) : name => {
         id         = vm.id
         state      = vm.state
         node       = vm.node_name
