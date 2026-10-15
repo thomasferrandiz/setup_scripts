@@ -16,6 +16,17 @@ If `bench-cp-01` is recreated and gets a new address, the existing joining
 servers keep the old one and must be updated or recreated. Use the
 `virtual_machines` output to obtain the VM addresses.
 
+kube-vip (`kube-vip.yaml`, deployed by cloud-init into the RKE2 server
+manifests directory) runs as a DaemonSet on the control-plane nodes in ARP
+control-plane mode. The leader binds the static VIP `rke2_api_vip`
+(default `192.168.64.253` on vm-net-2085) to `eth0`. Workers join through it at
+`https://192.168.64.253:9345`, and the Kubernetes API is reachable at
+`https://192.168.64.253:6443`. The VIP is added to every server's `tls-san`.
+vm-net-2085's DHCP pool covers the whole `/19`, so the VIP must be reserved or
+excluded on its DHCP server to avoid a conflict. kube-vip's DHCP mode is not
+used: it needs the `macvlan` module, which is missing from the image's
+`kernel-default-base`, and the DHCP server did not reliably answer its requests.
+
 The standalone `bench-net-01` VM has 1 CPU, 2 GiB RAM, a 20 GiB disk using the
 same base image, with its main interface on `default/vm-net` and its secondary
 interface on `default/vm-net-2085`. Its cloud-init installs the guest agent and authorizes the

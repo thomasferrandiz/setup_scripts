@@ -23,6 +23,17 @@ resource "random_password" "rke2_token" {
   special = false
 }
 
+variable "rke2_api_vip" {
+  description = "Static vm-net-2085 address that kube-vip announces on the RKE2 servers for the API (6443) and supervisor (9345). Workers join through it."
+  type        = string
+  default     = "192.168.64.253"
+
+  validation {
+    condition     = can(cidrhost("${var.rke2_api_vip}/32", 0)) && cidrhost("192.168.64.0/19", 0) == cidrhost("${var.rke2_api_vip}/19", 0)
+    error_message = "rke2_api_vip must be an IPv4 address in vm-net-2085 (192.168.64.0/19)."
+  }
+}
+
 locals {
   rke2_bootstrap_node = "bench-cp-01"
   rke2_joining_nodes  = toset(["bench-cp-02", "bench-cp-03"])
@@ -35,6 +46,10 @@ locals {
     rke2_token         = random_password.rke2_token.result
     rke2_server_script = file("${path.module}/rke2-server-sles.sh")
     bench_public_key   = trimspace(file("${path.module}/bench.key.pub"))
+    rke2_api_vip       = var.rke2_api_vip
+    kube_vip_manifest = templatefile("${path.module}/kube-vip.yaml", {
+      rke2_api_vip = var.rke2_api_vip
+    })
   }
 }
 
