@@ -34,8 +34,26 @@ variable "rke2_api_vip" {
   }
 }
 
+variable "rke2_worker_count" {
+  description = "Number of RKE2 worker (agent) VMs, named bench-wk-01, bench-wk-02, ..."
+  type        = number
+  default     = 50
+
+  validation {
+    condition     = var.rke2_worker_count >= 0 && var.rke2_worker_count <= 99 && floor(var.rke2_worker_count) == var.rke2_worker_count
+    error_message = "rke2_worker_count must be an integer between 0 and 99."
+  }
+}
+
+variable "rke2_agent_version" {
+  description = "RKE2 version installed on the workers. Agents must not be newer than the servers; keep it equal to the server version."
+  type        = string
+  default     = "v1.36.5+rke2r1"
+}
+
 locals {
   rke2_bootstrap_node = "bench-cp-01"
+  rke2_worker_nodes   = toset([for i in range(1, var.rke2_worker_count + 1) : format("bench-wk-%02d", i)])
   rke2_joining_nodes  = toset(["bench-cp-02", "bench-cp-03"])
 
   # Joining servers register directly with the bootstrap server: the Harvester
@@ -203,6 +221,109 @@ resource "harvester_virtualmachine" "bench" {
 
 }
 
+# Workers join through the kube-vip VIP rather than a specific server.
+resource "harvester_cloudinit_secret" "bench_worker" {
+  for_each = local.rke2_worker_nodes
+
+  name      = "${each.key}-cloudinit"
+  namespace = "default"
+  user_data = sensitive("#cloud-config\n${yamlencode({
+    hostname            = each.key
+    ssh_authorized_keys = [data.harvester_ssh_key.bench_dual_network.public_key]
+    users = [{
+      name        = "opensuse"
+      lock_passwd = true
+      shell       = "/bin/bash"
+      sudo        = "ALL=(ALL) NOPASSWD:ALL"
+      groups      = "users"
+      ssh_authorized_keys = [
+        data.harvester_ssh_key.bench_dual_network.public_key,
+        trimspace(file("${path.module}/bench.key.pub")),
+      ]
+    }]
+    write_files = [
+      {
+        path        = "/usr/local/sbin/rke2-agent-sles.sh"
+        owner       = "root:root"
+        permissions = "0755"
+        content     = file("${path.module}/rke2-agent-sles.sh")
+      },
+      {
+        path        = "/etc/rancher/rke2/config.yaml"
+        owner       = "root:root"
+        permissions = "0600"
+        content = yamlencode({
+          server    = "https://${var.rke2_api_vip}:9345"
+          token     = random_password.rke2_token.result
+          node-name = each.key
+        })
+      }
+    ]
+    package_update = true
+    packages       = ["qemu-guest-agent", "curl"]
+    runcmd = [
+      ["systemctl", "enable", "--now", "qemu-guest-agent.service"],
+      ["/usr/local/sbin/rke2-agent-sles.sh", var.rke2_agent_version],
+    ]
+  })}")
+}
+
+resource "harvester_virtualmachine" "bench_worker" {
+  for_each = local.rke2_worker_nodes
+
+  name      = each.key
+  namespace = "default"
+  labels = {
+    "node-role" = "worker"
+  }
+  cpu          = 1
+  memory       = "2Gi"
+  machine_type = "q35"
+  run_strategy = "RerunOnFailure"
+  ssh_keys     = ["default/tferrandiz"]
+
+  node_selector = {
+    "network.harvesterhci.io/cluster-net" = "true"
+  }
+
+  requests {
+    cpu    = "500m"
+    memory = "2Gi"
+  }
+
+  network_interface {
+    name         = "default"
+    network_name = "default/vm-net-2085"
+    model        = "virtio"
+    type         = "bridge"
+  }
+
+  disk {
+    name               = "disk-0"
+    type               = "disk"
+    size               = "20Gi"
+    bus                = "virtio"
+    boot_order         = 1
+    image              = "default/image-x49tz"
+    storage_class_name = "longhorn-image-x49tz"
+    access_mode        = "ReadWriteMany"
+    volume_mode        = "Block"
+    volume_name        = "${each.key}-disk-0"
+    auto_delete        = true
+  }
+
+  input {
+    name = "tablet"
+    type = "tablet"
+    bus  = "usb"
+  }
+
+  cloudinit {
+    type                  = "noCloud"
+    user_data_secret_name = harvester_cloudinit_secret.bench_worker[each.key].name
+  }
+}
+
 data "harvester_ssh_key" "bench_dual_network" {
   name      = "tferrandiz"
   namespace = "default"
@@ -338,7 +459,8 @@ output "virtual_machines" {
     {
       for name, vm in merge(
         { (local.rke2_bootstrap_node) = harvester_virtualmachine.bench_bootstrap },
-        harvester_virtualmachine.bench
+        harvester_virtualmachine.bench,
+        harvester_virtualmachine.bench_worker
         ) : name => {
         id         = vm.id
         state      = vm.state

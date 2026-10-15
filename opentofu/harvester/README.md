@@ -27,6 +27,17 @@ excluded on its DHCP server to avoid a conflict. kube-vip's DHCP mode is not
 used: it needs the `macvlan` module, which is missing from the image's
 `kernel-default-base`, and the DHCP server did not reliably answer its requests.
 
+`rke2_worker_count` (default 50) worker VMs, `bench-wk-01` to `bench-wk-50`,
+have 1 CPU, 2 GiB RAM and a 20 GiB disk on the same base image and a single
+NIC on vm-net-2085. Their cloud-init (one Harvester secret per worker) writes
+an RKE2 agent config pointing at `https://<rke2_api_vip>:9345` with the shared
+token, then runs `rke2-agent-sles.sh`, which waits for the supervisor on the VIP
+and installs `rke2-agent` pinned to `rke2_agent_version`. Keep that version equal
+to the servers' version (agents must not be newer than the servers). The
+`opensuse` user accepts the Harvester `default/tferrandiz` key and
+`bench.key.pub`, so workers are reachable from `bench-net-01`; password login is
+locked.
+
 The standalone `bench-net-01` VM has 1 CPU, 2 GiB RAM, a 20 GiB disk using the
 same base image, with its main interface on `default/vm-net` and its secondary
 interface on `default/vm-net-2085`. Its cloud-init installs the guest agent and authorizes the
