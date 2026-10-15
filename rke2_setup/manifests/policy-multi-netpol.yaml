@@ -1,0 +1,32 @@
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: web-policy
+  namespace: default
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: "macvlan1-config"
+spec:
+  podSelector:
+    matchLabels:
+      app: multus-demo
+  policyTypes:
+  - Ingress
+  # - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: multus-demo
+    - ipBlock:
+        cidr: 192.168.2.0/24
+    ports:
+    - protocol: TCP
+      port: 443
+  # egress:
+  # - to:
+  #   - namespaceSelector:
+  #       matchLabels:
+  #         name: multus-demo
+  #   ports:
+  #   - protocol: TCP
+  #     port: 443
