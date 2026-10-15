@@ -22,6 +22,15 @@ provider's inline SSH-key append logic, which does not recognize the quoted
 YAML keys emitted by `yamlencode` and would append a duplicate section.
 This VM does not install or join RKE2.
 
+For VM-to-VM SSH, the local key pair `bench.key` / `bench.key.pub` (in this
+directory; the private key is gitignored and must be provided locally) is used:
+`bench.key.pub` is added to the `opensuse` user's authorized keys on the
+`bench-cp-*` VMs, and `bench-net-01` gets `bench.key`, `bench.key.pub`, and an
+`~/.ssh/config` selecting `bench.key` in `/home/opensuse/.ssh`. The
+`bench-net-01` cloud-init is stored in a Harvester secret so the private key is
+not embedded in the VM spec; it is still stored in Terraform state. Like the
+rest of cloud-init, this only applies on first boot.
+
 Explicit cloud-init network data enables DHCPv4 on both `eth0` (`vm-net`)
 and `eth1` (`vm-net-2085`). Without it, the image's fallback network configuration
 only enables the first interface. Both VLANs require an external DHCP service;

@@ -40,6 +40,7 @@ resource "harvester_cloudinit_secret" "bench" {
     api_endpoint       = var.rke2_api_endpoint
     rke2_token         = random_password.rke2_token.result
     rke2_server_script = file("${path.module}/rke2-server-sles.sh")
+    bench_public_key   = trimspace(file("${path.module}/bench.key.pub"))
   }))
 }
 
@@ -103,6 +104,51 @@ resource "harvester_virtualmachine" "bench" {
 data "harvester_ssh_key" "bench_dual_network" {
   name      = "tferrandiz"
   namespace = "default"
+}
+
+# Stored in a secret so the private key is not embedded in the VM spec.
+resource "harvester_cloudinit_secret" "bench_dual_network" {
+  name      = "bench-net-01-cloudinit"
+  namespace = "default"
+  user_data = sensitive("#cloud-config\n${yamlencode({
+    hostname            = "bench-net-01"
+    ssh_authorized_keys = [data.harvester_ssh_key.bench_dual_network.public_key]
+    users = [{
+      name                = "opensuse"
+      lock_passwd         = true
+      shell               = "/bin/bash"
+      sudo                = "ALL=(ALL) NOPASSWD:ALL"
+      groups              = "users"
+      ssh_authorized_keys = [data.harvester_ssh_key.bench_dual_network.public_key]
+    }]
+    # Deferred so the files are written after the opensuse user exists.
+    write_files = [
+      {
+        path        = "/home/opensuse/.ssh/bench.key"
+        owner       = "opensuse:users"
+        permissions = "0600"
+        content     = file("${path.module}/bench.key")
+        defer       = true
+      },
+      {
+        path        = "/home/opensuse/.ssh/bench.key.pub"
+        owner       = "opensuse:users"
+        permissions = "0644"
+        content     = file("${path.module}/bench.key.pub")
+        defer       = true
+      },
+      {
+        path        = "/home/opensuse/.ssh/config"
+        owner       = "opensuse:users"
+        permissions = "0600"
+        content     = "Host *\n  IdentityFile ~/.ssh/bench.key\n"
+        defer       = true
+      }
+    ]
+    package_update = true
+    packages       = ["qemu-guest-agent"]
+    runcmd         = [["systemctl", "enable", "--now", "qemu-guest-agent.service"]]
+  })}")
 }
 
 resource "harvester_virtualmachine" "bench_dual_network" {
@@ -174,21 +220,7 @@ resource "harvester_virtualmachine" "bench_dual_network" {
         }
       ]
     })
-    user_data_base64 = base64encode("#cloud-config\n${yamlencode({
-      hostname            = "bench-net-01"
-      ssh_authorized_keys = [data.harvester_ssh_key.bench_dual_network.public_key]
-      users = [{
-        name                = "opensuse"
-        lock_passwd         = true
-        shell               = "/bin/bash"
-        sudo                = "ALL=(ALL) NOPASSWD:ALL"
-        groups              = "users"
-        ssh_authorized_keys = [data.harvester_ssh_key.bench_dual_network.public_key]
-      }]
-      package_update = true
-      packages       = ["qemu-guest-agent"]
-      runcmd         = [["systemctl", "enable", "--now", "qemu-guest-agent.service"]]
-    })}")
+    user_data_secret_name = harvester_cloudinit_secret.bench_dual_network.name
   }
 }
 
