@@ -147,7 +147,13 @@ resource "harvester_cloudinit_secret" "bench_dual_network" {
     ]
     package_update = true
     packages       = ["qemu-guest-agent"]
-    runcmd         = [["systemctl", "enable", "--now", "qemu-guest-agent.service"]]
+    runcmd = [
+      ["systemctl", "enable", "--now", "qemu-guest-agent.service"],
+      # Keep the default route on eth0 (vm-net): vm-net-2085 is not reachable
+      # from the R&D network, so replies routed through eth1 would be lost.
+      ["sh", "-c", "grep -q '^DHCLIENT_SET_DEFAULT_ROUTE=' /etc/sysconfig/network/ifcfg-eth1 || echo \"DHCLIENT_SET_DEFAULT_ROUTE='no'\" >> /etc/sysconfig/network/ifcfg-eth1"],
+      ["systemctl", "restart", "wicked"],
+    ]
   })}")
 }
 
