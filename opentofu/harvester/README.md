@@ -12,6 +12,24 @@ The VMs connect to `default/vm-net-2085`. The load balancer at
 **9345** to all three VM addresses. Change the variable in `main.tf` if the
 address changes. Use the `virtual_machines` output to obtain the VM addresses.
 
+The standalone `bench-net-01` VM has 1 CPU, 2 GiB RAM, a 20 GiB disk using the
+same base image, with its main interface on `default/vm-net` and its secondary
+interface on `default/vm-net-2085`. Its cloud-init installs the guest agent and authorizes the
+public key read from Harvester's `default/tferrandiz` SSH key for the `opensuse`
+user (password login is locked). The key is also included in the top-level
+`ssh_authorized_keys` section. Userdata is base64-encoded to bypass the
+provider's inline SSH-key append logic, which does not recognize the quoted
+YAML keys emitted by `yamlencode` and would append a duplicate section.
+This VM does not install or join RKE2.
+
+Explicit cloud-init network data enables DHCPv4 on both `eth0` (`vm-net`)
+and `eth1` (`vm-net-2085`). Without it, the image's fallback network configuration
+only enables the first interface. Both VLANs require an external DHCP service;
+attaching a Harvester VLAN network does not itself assign an address.
+For an already initialized VM, updating cloud-init does not automatically
+reconfigure the guest. Configure its missing interface through the console or
+guest agent, or recreate the VM only if its disk contents are disposable.
+
 Note: the Harvester provider sets `labels` only on the VirtualMachine object,
 not on its VMI template. Harvester's load balancer `backendServerSelector`
 matches VMIs, so a `node-role=control-plane` selector will not find these VMs

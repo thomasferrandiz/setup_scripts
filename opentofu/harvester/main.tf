@@ -100,14 +100,116 @@ resource "harvester_virtualmachine" "bench" {
 
 }
 
+data "harvester_ssh_key" "bench_dual_network" {
+  name      = "tferrandiz"
+  namespace = "default"
+}
+
+resource "harvester_virtualmachine" "bench_dual_network" {
+  name         = "bench-net-01"
+  namespace    = "default"
+  cpu          = 1
+  memory       = "2Gi"
+  machine_type = "q35"
+  run_strategy = "RerunOnFailure"
+  ssh_keys     = ["default/tferrandiz"]
+
+  node_selector = {
+    "network.harvesterhci.io/cluster-net" = "true"
+  }
+
+  requests {
+    cpu    = "500m"
+    memory = "2Gi"
+  }
+
+  network_interface {
+    name         = "default"
+    network_name = "default/vm-net"
+    model        = "virtio"
+    type         = "bridge"
+  }
+
+  network_interface {
+    name         = "vm-net-2085"
+    network_name = "default/vm-net-2085"
+    model        = "virtio"
+    type         = "bridge"
+  }
+
+  disk {
+    name               = "disk-0"
+    type               = "disk"
+    size               = "20Gi"
+    bus                = "virtio"
+    boot_order         = 1
+    image              = "default/image-x49tz"
+    storage_class_name = "longhorn-image-x49tz"
+    access_mode        = "ReadWriteMany"
+    volume_mode        = "Block"
+    volume_name        = "bench-net-01-disk-0"
+    auto_delete        = true
+  }
+
+  input {
+    name = "tablet"
+    type = "tablet"
+    bus  = "usb"
+  }
+
+  cloudinit {
+    type = "noCloud"
+    network_data = yamlencode({
+      version = 1
+      config = [
+        {
+          type    = "physical"
+          name    = "eth0"
+          subnets = [{ type = "dhcp4" }]
+        },
+        {
+          type    = "physical"
+          name    = "eth1"
+          subnets = [{ type = "dhcp4" }]
+        }
+      ]
+    })
+    user_data_base64 = base64encode("#cloud-config\n${yamlencode({
+      hostname            = "bench-net-01"
+      ssh_authorized_keys = [data.harvester_ssh_key.bench_dual_network.public_key]
+      users = [{
+        name                = "opensuse"
+        lock_passwd         = true
+        shell               = "/bin/bash"
+        sudo                = "ALL=(ALL) NOPASSWD:ALL"
+        groups              = "users"
+        ssh_authorized_keys = [data.harvester_ssh_key.bench_dual_network.public_key]
+      }]
+      package_update = true
+      packages       = ["qemu-guest-agent"]
+      runcmd         = [["systemctl", "enable", "--now", "qemu-guest-agent.service"]]
+    })}")
+  }
+}
+
 output "virtual_machines" {
   description = "Harvester VM IDs, runtime states, and assigned hosts."
-  value = {
-    for name, vm in harvester_virtualmachine.bench : name => {
-      id         = vm.id
-      state      = vm.state
-      node       = vm.node_name
-      ip_address = try(vm.network_interface[0].ip_address, null)
+  value = merge(
+    {
+      for name, vm in harvester_virtualmachine.bench : name => {
+        id         = vm.id
+        state      = vm.state
+        node       = vm.node_name
+        ip_address = try(vm.network_interface[0].ip_address, null)
+      }
+    },
+    {
+      "bench-net-01" = {
+        id         = harvester_virtualmachine.bench_dual_network.id
+        state      = harvester_virtualmachine.bench_dual_network.state
+        node       = harvester_virtualmachine.bench_dual_network.node_name
+        ip_address = try(harvester_virtualmachine.bench_dual_network.network_interface[0].ip_address, null)
+      }
     }
-  }
+  )
 }
