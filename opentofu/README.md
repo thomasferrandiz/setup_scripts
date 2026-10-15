@@ -9,8 +9,9 @@ It also includes a standalone [Harvester configuration](harvester/main.tf).
 The `harvester/` configuration uses `harvester/harvester` 1.9.0 to create
 `default/bench-cp-01`, `default/bench-cp-02`, and `default/bench-cp-03`.
 Each VM has 8 vCPUs, 16 GiB RAM, a 40 GiB virtio boot disk cloned from
-`default/image-x49tz`, a virtio bridge interface on `default/vm-net`, a USB
-tablet, the q35 machine type, and the `RerunOnFailure` run strategy.
+`default/image-x49tz`, a virtio bridge interface on
+`default/vm-net-2085`, a USB tablet, the q35 machine type, and the
+`RerunOnFailure` run strategy.
 Resource requests match the manifest: 500m CPU and 16 GiB memory. A node
 selector requires `network.harvesterhci.io/cluster-net=true`, equivalent
 to the manifest's required single-value node affinity.
@@ -18,11 +19,12 @@ The image, its `longhorn-image-x49tz` storage class, network, and
 `default/tferrandiz` SSH key must already exist.
 
 Save the Harvester kubeconfig as `harvester/local.yaml` (its current context
-is used), and the cloud-init user data as `harvester/cloud-config.yml`.
-Both files are ignored by Git because they contain credentials. All three VMs use
-the provided cloud-init file (including the guest agent, Docker, and SSH
-access); it must not contain a shared static IP or fixed hostname. Each VM
-gets a new boot volume named `<vm-name>-disk-0`.
+is used), and the cloud-init template as `harvester/cloud-config.yml`.
+Both files are ignored by Git because they contain credentials. OpenTofu
+creates a Harvester cloud-init secret for each VM, avoiding Harvester's 2 KiB
+limit on inline cloud-init user data. Each VM gets its own hostname, and its
+secret contains the RKE2 bootstrap configuration and script. Each VM gets a
+new boot volume named `<vm-name>-disk-0`.
 
 With OpenTofu or Terraform >= 1.5:
 
@@ -51,7 +53,8 @@ specific preference.
 
 Cloud-init contents (including password hashes) are stored in local state
 and saved plans even when marked sensitive. Protect those files; they are
-ignored by Git. The AWS wrapper scripts do not manage this configuration.
+ignored by Git. Regenerate any saved plan after changing this configuration.
+The AWS wrapper scripts do not manage this configuration.
 
 ### TLS hostname mismatch in test environments
 
