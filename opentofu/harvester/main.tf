@@ -37,11 +37,11 @@ variable "rke2_api_vip" {
 variable "rke2_worker_count" {
   description = "Number of RKE2 worker (agent) VMs, named bench-wk-01, bench-wk-02, ... Use scale-workers.sh to add them in Ready-gated batches of 50."
   type        = number
-  default     = 500
+  default     = 750
 
   validation {
-    condition     = var.rke2_worker_count >= 0 && var.rke2_worker_count <= 500 && floor(var.rke2_worker_count) == var.rke2_worker_count
-    error_message = "rke2_worker_count must be an integer between 0 and 500."
+    condition     = var.rke2_worker_count >= 0 && var.rke2_worker_count <= 750 && floor(var.rke2_worker_count) == var.rke2_worker_count
+    error_message = "rke2_worker_count must be an integer between 0 and 750."
   }
 }
 

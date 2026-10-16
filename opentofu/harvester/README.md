@@ -27,8 +27,8 @@ excluded on its DHCP server to avoid a conflict. kube-vip's DHCP mode is not
 used: it needs the `macvlan` module, which is missing from the image's
 `kernel-default-base`, and the DHCP server did not reliably answer its requests.
 
-`rke2_worker_count` (default 500, allowed range 0-500) worker VMs,
-`bench-wk-01` to `bench-wk-500` (existing two-digit names are preserved),
+`rke2_worker_count` (default 750, allowed range 0-750) worker VMs,
+`bench-wk-01` to `bench-wk-750` (existing two-digit names are preserved),
 have 1 CPU, 2 GiB RAM and a 20 GiB disk on the same base image and a single
 NIC on vm-net-2085. Their cloud-init (one Harvester secret per worker) writes
 an RKE2 agent config pointing at `https://<rke2_api_vip>:9345` with the shared
@@ -42,7 +42,7 @@ locked.
 ## Scaling workers in batches
 
 Use [scale-workers.sh](./scale-workers.sh) instead of a direct `tofu apply`
-to scale to 500 workers without having them all join at once:
+to scale to 750 workers (the default and maximum) without having them all join at once:
 
 ```bash
 cd opentofu/harvester
@@ -69,7 +69,7 @@ the highest existing worker number (recreating any missing lower-numbered
 workers left by an interrupted batch), and waits for all three control-plane nodes and every existing
 worker to report Kubernetes `Ready=True`. It then applies increasing worker
 counts in groups of at most 50, waiting for **all expected nodes** to be Ready
-before each next apply. From 50 workers, the counts are 100, 150, ..., 500.
+before each next apply. From 50 workers, the counts are 100, 150, ..., 750.
 On a fresh deployment it first applies a count of zero to bootstrap the
 control plane and jump host, then discovers their addresses automatically.
 
@@ -83,7 +83,7 @@ are auto-approved and include any other pending configuration changes, so
 review those changes first.
 
 **Batching is enforced by the script, not by `main.tf`.** A plain `tofu apply`
-uses the default count of 500 and can start all missing workers together.
+uses the default count of 750 and can start all missing workers together.
 During an interrupted rollout, use the script to resume, not a plain apply.
 VM creation/guest-agent readiness and OpenTofu's `-parallelism` alone do not
 guarantee that Kubernetes nodes have finished joining.
@@ -93,7 +93,7 @@ guarantee that Kubernetes nodes have finished joining.
 The rebuilt cluster uses pod CIDR `10.44.0.0/14`, defined by
 `local.rke2_cluster_cidr` in `main.tf` and passed to every server's cloud-init.
 With Kubernetes' default `/24` per-node allocation, it provides 1,024 node
-blocks, enough for 500 workers plus three control-plane nodes. Cilium uses
+blocks, enough for 750 workers plus three control-plane nodes. Cilium uses
 these allocations through Kubernetes IPAM. The service CIDR remains
 `10.43.0.0/16`; neither it nor vm-net-2085 overlaps the pod range.
 
