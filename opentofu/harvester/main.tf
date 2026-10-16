@@ -35,13 +35,13 @@ variable "rke2_api_vip" {
 }
 
 variable "rke2_worker_count" {
-  description = "Number of RKE2 worker (agent) VMs, named bench-wk-01, bench-wk-02, ..."
+  description = "Number of RKE2 worker (agent) VMs, named bench-wk-01, bench-wk-02, ... Use scale-workers.sh to add them in Ready-gated batches of 50."
   type        = number
-  default     = 50
+  default     = 500
 
   validation {
-    condition     = var.rke2_worker_count >= 0 && var.rke2_worker_count <= 99 && floor(var.rke2_worker_count) == var.rke2_worker_count
-    error_message = "rke2_worker_count must be an integer between 0 and 99."
+    condition     = var.rke2_worker_count >= 0 && var.rke2_worker_count <= 500 && floor(var.rke2_worker_count) == var.rke2_worker_count
+    error_message = "rke2_worker_count must be an integer between 0 and 500."
   }
 }
 
@@ -52,6 +52,7 @@ variable "rke2_agent_version" {
 }
 
 locals {
+  rke2_cluster_cidr   = "10.44.0.0/14"
   rke2_bootstrap_node = "bench-cp-01"
   rke2_worker_nodes   = toset([for i in range(1, var.rke2_worker_count + 1) : format("bench-wk-%02d", i)])
   rke2_joining_nodes  = toset(["bench-cp-02", "bench-cp-03"])
@@ -65,6 +66,7 @@ locals {
     rke2_server_script = file("${path.module}/rke2-server-sles.sh")
     bench_public_key   = trimspace(file("${path.module}/bench.key.pub"))
     rke2_api_vip       = var.rke2_api_vip
+    rke2_cluster_cidr  = local.rke2_cluster_cidr
     kube_vip_manifest = templatefile("${path.module}/kube-vip.yaml", {
       rke2_api_vip = var.rke2_api_vip
     })
@@ -399,10 +401,11 @@ resource "harvester_virtualmachine" "bench_dual_network" {
   }
 
   network_interface {
-    name         = "default"
-    network_name = "default/vm-net"
-    model        = "virtio"
-    type         = "bridge"
+    name           = "default"
+    network_name   = "default/vm-net"
+    model          = "virtio"
+    type           = "bridge"
+    wait_for_lease = true
   }
 
   network_interface {

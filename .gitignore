@@ -25,3 +25,4 @@ opentofu/harvester/.terraform.tfstate.lock.info
 opentofu/harvester/*.tfplan
 opentofu/harvester/.terraform.lock.hcl
 opentofu/harvester/bench.key
+opentofu/harvester/jump_host.key
