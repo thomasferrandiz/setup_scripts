@@ -28,6 +28,22 @@ spec:
       enabled: true
     ipv6:
       enabled: false
+    # The defaults plus the control-plane CriticalAddonsOnly taint; the agent
+    # and envoy already tolerate every taint.
+    operator:
+      tolerations:
+        - key: CriticalAddonsOnly
+          operator: Exists
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+        - key: node-role.kubernetes.io/etcd
+          operator: Exists
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+        - key: node.cloudprovider.kubernetes.io/uninitialized
+          operator: Exists
 EOF
 fi
 

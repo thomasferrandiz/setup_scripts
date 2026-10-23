@@ -109,10 +109,10 @@ class ScaleWorkersTest(unittest.TestCase):
     def assert_success(self, result):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_default_target_scales_existing_fifty_to_seven_hundred_fifty(self):
+    def test_default_target_scales_existing_fifty_to_one_thousand(self):
         result, applies, queries = self.run_scaling(50)
         self.assert_success(result)
-        self.assertEqual(applies, list(range(50, 751, 50)))
+        self.assertEqual(applies, list(range(50, 1001, 50)))
         self.assertEqual(queries, applies)
 
     def test_fresh_cluster_bootstraps_before_first_batch(self):
@@ -128,10 +128,10 @@ class ScaleWorkersTest(unittest.TestCase):
         self.assertEqual(queries, applies)
 
     def test_completed_rollout_only_reconciles_and_checks(self):
-        result, applies, queries = self.run_scaling(750)
+        result, applies, queries = self.run_scaling(1000)
         self.assert_success(result)
-        self.assertEqual(applies, [750])
-        self.assertEqual(queries, [750])
+        self.assertEqual(applies, [1000])
+        self.assertEqual(queries, [1000])
 
     def test_refuses_scale_down(self):
         result, applies, _ = self.run_scaling(100, 50)
@@ -156,7 +156,7 @@ class ScaleWorkersTest(unittest.TestCase):
                 self.assertEqual(applies, [])
 
     def test_invalid_targets_do_not_apply(self):
-        for target in (0, -1, 751, "1000", "1.5", "050", "abc"):
+        for target in (0, -1, 1001, "10000", "1.5", "050", "abc"):
             with self.subTest(target=target):
                 result, applies, _ = self.run_scaling(50, target)
                 self.assertNotEqual(result.returncode, 0)

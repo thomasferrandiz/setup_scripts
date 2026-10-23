@@ -1,12 +1,23 @@
 # Harvester RKE2 control plane
 
+For workload density and API server stress testing with CPU/memory sampling,
+see the [kube-burner workloads](./kube-burner/README.md).
+
 The cloud-init configuration installs RKE2 server services on `bench-cp-01`,
 `bench-cp-02`, and `bench-cp-03`. Each Harvester VirtualMachine carries the
 label `node-role=control-plane` (set on the VM object, not as an RKE2/Kubernetes
 node label). `bench-cp-01` bootstraps the cluster; `bench-cp-02` and
 `bench-cp-03` join it directly at `https://<bench-cp-01 IP>:9345`. Cloud-init
 writes the RKE2 config and bootstrap script, then runs that script after
-enabling the guest services.
+enabling the guest services. Every RKE2 node (servers and workers) gets the
+`iptables` package. The `opensuse` user logs in with SSH keys only (password
+login is locked). The servers register with the taint
+`CriticalAddonsOnly=true:NoExecute`, so ordinary workloads run on the workers
+only; pods that must run on the control plane (such as kube-vip) need a
+matching toleration. The servers also set `etcd-expose-metrics: true`, so etcd
+serves its Prometheus metrics, unauthenticated, on port 2381 of each server's
+node IP. The kube-burner runner reads them through the API server
+(see [etcd metrics](./kube-burner/README.md#etcd-metrics)).
 
 The VMs connect to `default/vm-net-2085`. The Harvester load balancer cannot
 reach backends on this isolated network, so joining servers do not use it.
@@ -27,8 +38,8 @@ excluded on its DHCP server to avoid a conflict. kube-vip's DHCP mode is not
 used: it needs the `macvlan` module, which is missing from the image's
 `kernel-default-base`, and the DHCP server did not reliably answer its requests.
 
-`rke2_worker_count` (default 750, allowed range 0-750) worker VMs,
-`bench-wk-01` to `bench-wk-750` (existing two-digit names are preserved),
+`rke2_worker_count` (default 1000, allowed range 0-1000) worker VMs,
+`bench-wk-01` to `bench-wk-1000` (existing two-digit names are preserved),
 have 1 CPU, 2 GiB RAM and a 20 GiB disk on the same base image and a single
 NIC on vm-net-2085. Their cloud-init (one Harvester secret per worker) writes
 an RKE2 agent config pointing at `https://<rke2_api_vip>:9345` with the shared
@@ -42,7 +53,7 @@ locked.
 ## Scaling workers in batches
 
 Use [scale-workers.sh](./scale-workers.sh) instead of a direct `tofu apply`
-to scale to 750 workers (the default and maximum) without having them all join at once:
+to scale to 1000 workers (the default and maximum) without having them all join at once:
 
 ```bash
 cd opentofu/harvester
@@ -69,7 +80,7 @@ the highest existing worker number (recreating any missing lower-numbered
 workers left by an interrupted batch), and waits for all three control-plane nodes and every existing
 worker to report Kubernetes `Ready=True`. It then applies increasing worker
 counts in groups of at most 50, waiting for **all expected nodes** to be Ready
-before each next apply. From 50 workers, the counts are 100, 150, ..., 750.
+before each next apply. From 50 workers, the counts are 100, 150, ..., 1000.
 On a fresh deployment it first applies a count of zero to bootstrap the
 control plane and jump host, then discovers their addresses automatically.
 
@@ -83,7 +94,7 @@ are auto-approved and include any other pending configuration changes, so
 review those changes first.
 
 **Batching is enforced by the script, not by `main.tf`.** A plain `tofu apply`
-uses the default count of 750 and can start all missing workers together.
+uses the default count of 1000 and can start all missing workers together.
 During an interrupted rollout, use the script to resume, not a plain apply.
 VM creation/guest-agent readiness and OpenTofu's `-parallelism` alone do not
 guarantee that Kubernetes nodes have finished joining.
@@ -93,7 +104,7 @@ guarantee that Kubernetes nodes have finished joining.
 The rebuilt cluster uses pod CIDR `10.44.0.0/14`, defined by
 `local.rke2_cluster_cidr` in `main.tf` and passed to every server's cloud-init.
 With Kubernetes' default `/24` per-node allocation, it provides 1,024 node
-blocks, enough for 750 workers plus three control-plane nodes. Cilium uses
+blocks, enough for 1000 workers plus three control-plane nodes (21 spare). Cilium uses
 these allocations through Kubernetes IPAM. The service CIDR remains
 `10.43.0.0/16`; neither it nor vm-net-2085 overlaps the pod range.
 
@@ -145,7 +156,8 @@ used as the selector instead.
 RKE2's bundled Cilium chart is configured for kube-proxy replacement and
 IPv4-only networking (`10.44.0.0/14` pod CIDR and `10.43.0.0/16` service
 CIDR). The guest kernel must be version 5.8 or newer for Cilium kube-proxy
-replacement.
+replacement. The Cilium operator also tolerates the control-plane
+`CriticalAddonsOnly` taint (the agent and envoy already tolerate all taints).
 
 Terraform generates a shared RKE2 token and stores it in the Terraform state.
 Terraform stores each VM's cloud-init in a Harvester secret to avoid the

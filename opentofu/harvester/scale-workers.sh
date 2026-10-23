@@ -2,13 +2,13 @@
 set -euo pipefail
 
 if (( $# > 1 )); then
-  echo "Usage: $0 [worker-count=750]" >&2
+  echo "Usage: $0 [worker-count=1000]" >&2
   exit 1
 fi
 
-target_count=${1:-750}
-if [[ ! "$target_count" =~ ^[1-9][0-9]{0,2}$ ]] || (( target_count > 750 )); then
-  echo "worker-count must be an integer between 1 and 750." >&2
+target_count=${1:-1000}
+if [[ ! "$target_count" =~ ^[1-9][0-9]{0,3}$ ]] || (( target_count > 1000 )); then
+  echo "worker-count must be an integer between 1 and 1000." >&2
   exit 1
 fi
 
