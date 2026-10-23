@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: perfapp-{{ .Replica }}-{{ .Iteration }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: perfapp-{{ .Replica }}-{{ .Iteration }}
+  template:
+    metadata:
+      labels:
+        app: perfapp-{{ .Replica }}-{{ .Iteration }}
+        workload: kubelet-density-heavy
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: DoesNotExist
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              workload: kubelet-density-heavy
+      containers:
+        - name: perfapp
+          image: quay.io/cloud-bulldozer/perfapp:latest
+          env:
+            - name: POSTGRESQL_USER
+              value: admin
+            - name: POSTGRESQL_PASSWORD
+              value: benchmark-only
+            - name: POSTGRESQL_DATABASE
+              value: kubelet-density
+            - name: POSTGRESQL_HOSTNAME
+              value: postgresql-{{ .Replica }}-{{ .Iteration }}
+            - name: POSTGRESQL_PORT
+              value: "5432"
+            - name: POSTGRESQL_RETRY_INTERVAL
+              value: "5"
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            periodSeconds: 10
+            failureThreshold: 1
+            timeoutSeconds: 60
+            initialDelaySeconds: 30

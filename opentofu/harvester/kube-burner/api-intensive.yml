@@ -1,0 +1,110 @@
+global:
+  gc: true
+  measurements:
+    - name: podLatency
+
+jobs:
+  - name: api-intensive
+    jobIterations: {{ .ITERATIONS }}
+    qps: {{ .QPS }}
+    burst: {{ .BURST }}
+    namespacedIterations: true
+    namespace: api-intensive
+    cleanup: true
+    # Pre-loading runs a DaemonSet on every node (~9 minutes on 1000 nodes) and
+    # adds API traffic before the test; pause is small and pulled on demand.
+    preLoadImages: false
+    podWait: false
+    waitWhenFinished: true
+    maxWaitTimeout: 30m
+    jobPause: {{ .HOLD_DURATION }}
+    objects:
+      - objectTemplate: templates/api-intensive/configmap.yml
+        replicas: 1
+      - objectTemplate: templates/api-intensive/secret.yml
+        replicas: 1
+      - objectTemplate: templates/api-intensive/deployment.yml
+        replicas: 1
+      - objectTemplate: templates/api-intensive/service.yml
+        replicas: 1
+
+  # Each iteration LISTs every kind cluster-wide, then GETs each object.
+  - name: api-intensive-read
+    jobType: read
+    jobIterations: {{ .READ_ITERATIONS }}
+    qps: {{ .QPS }}
+    burst: {{ .BURST }}
+    objects:
+      - kind: ConfigMap
+        apiVersion: v1
+        labelSelector: {kube-burner.io/job: api-intensive}
+      - kind: Secret
+        apiVersion: v1
+        labelSelector: {kube-burner.io/job: api-intensive}
+      - kind: Service
+        apiVersion: v1
+        labelSelector: {kube-burner.io/job: api-intensive}
+      - kind: Deployment
+        apiVersion: apps/v1
+        labelSelector: {kube-burner.io/job: api-intensive}
+      - kind: Pod
+        apiVersion: v1
+        labelSelector: {kube-burner.io/job: api-intensive}
+
+  - name: api-intensive-patch
+    jobType: patch
+    jobIterations: {{ .PATCH_ITERATIONS }}
+    qps: {{ .QPS }}
+    burst: {{ .BURST }}
+    objects:
+      - kind: Deployment
+        apiVersion: apps/v1
+        objectTemplate: templates/api-intensive/deployment-patch-add-label.json
+        labelSelector: {kube-burner.io/job: api-intensive}
+        patchType: application/json-patch+json
+      - kind: Deployment
+        apiVersion: apps/v1
+        objectTemplate: templates/api-intensive/deployment-patch-add-container.yml
+        labelSelector: {kube-burner.io/job: api-intensive}
+        patchType: application/apply-patch+yaml
+      - kind: Deployment
+        apiVersion: apps/v1
+        objectTemplate: templates/api-intensive/deployment-patch-iteration-label.yml
+        labelSelector: {kube-burner.io/job: api-intensive}
+        patchType: application/strategic-merge-patch+json
+
+  # Garbage collection then deletes the ReplicaSets and pods in the background.
+  # Deleting pods explicitly would race it: the ReplicaSets recreate pods, and
+  # kube-burner logs a 404 as an error.
+  - name: api-intensive-remove-deployments
+    jobType: delete
+    qps: {{ .QPS }}
+    burst: {{ .BURST }}
+    waitForDeletion: true
+    objects:
+      - kind: Deployment
+        apiVersion: apps/v1
+        labelSelector: {kube-burner.io/job: api-intensive}
+
+  - name: api-intensive-remove-services
+    jobType: delete
+    qps: {{ .QPS }}
+    burst: {{ .BURST }}
+    waitForDeletion: true
+    objects:
+      - kind: Service
+        apiVersion: v1
+        labelSelector: {kube-burner.io/job: api-intensive}
+
+  - name: api-intensive-remove-configs
+    jobType: delete
+    qps: {{ .QPS }}
+    burst: {{ .BURST }}
+    waitForDeletion: true
+    objects:
+      - kind: ConfigMap
+        apiVersion: v1
+        labelSelector: {kube-burner.io/job: api-intensive}
+      - kind: Secret
+        apiVersion: v1
+        labelSelector: {kube-burner.io/job: api-intensive}

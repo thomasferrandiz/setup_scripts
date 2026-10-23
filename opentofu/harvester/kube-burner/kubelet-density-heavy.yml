@@ -1,0 +1,24 @@
+global:
+  gc: true
+  measurements:
+    - name: podLatency
+
+jobs:
+  - name: kubelet-density-heavy
+    jobIterations: {{ .ITERATIONS }}
+    qps: {{ .QPS }}
+    burst: {{ .BURST }}
+    namespacedIterations: false
+    namespace: kubelet-density-heavy
+    waitWhenFinished: true
+    maxWaitTimeout: 30m
+    jobPause: {{ .HOLD_DURATION }}
+    preLoadImages: false
+    podWait: false
+    objects:
+      - objectTemplate: templates/postgres-deployment.yml
+        replicas: 1
+      - objectTemplate: templates/app-deployment.yml
+        replicas: 1
+      - objectTemplate: templates/postgres-service.yml
+        replicas: 1

@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-intensive-{{ .Replica }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-intensive-{{ .Replica }}
+  template:
+    metadata:
+      labels:
+        app: api-intensive-{{ .Replica }}
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: DoesNotExist
+      containers:
+        - name: api-intensive
+          image: registry.k8s.io/pause:3.10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: configmap
+              mountPath: /var/configmap
+            - name: secret
+              mountPath: /var/secret
+      dnsPolicy: Default
+      terminationGracePeriodSeconds: 1
+      # Avoid evicting the whole workload during transient node failures.
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 900
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 900
+      volumes:
+        - name: configmap
+          configMap:
+            name: configmap-{{ .Replica }}
+        - name: secret
+          secret:
+            secretName: secret-{{ .Replica }}

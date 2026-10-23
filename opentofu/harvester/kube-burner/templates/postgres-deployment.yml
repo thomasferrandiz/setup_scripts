@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-{{ .Replica }}-{{ .Iteration }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-{{ .Replica }}-{{ .Iteration }}
+  template:
+    metadata:
+      labels:
+        app: postgres-{{ .Replica }}-{{ .Iteration }}
+        workload: kubelet-density-heavy
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: DoesNotExist
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              workload: kubelet-density-heavy
+      containers:
+        - name: postgresql
+          image: postgres:16-bookworm
+          env:
+            - name: POSTGRES_USER
+              value: admin
+            - name: POSTGRES_PASSWORD
+              value: benchmark-only
+            - name: POSTGRES_DB
+              value: kubelet-density
+          ports:
+            - containerPort: 5432
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            exec:
+              command: [pg_isready, -U, admin, -d, kubelet-density]
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          emptyDir:
+            sizeLimit: 2Gi
