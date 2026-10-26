@@ -1,0 +1,51 @@
+#cloud-config
+hostname: ${node_name}
+package_update: true
+packages:
+  - qemu-guest-agent
+  - haproxy
+  - keepalived
+  - iptables
+users:
+  - name: opensuse
+    lock_passwd: true
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: users
+    ssh_authorized_keys:
+      - ${harvester_public_key}
+      - ${bench_public_key}
+write_files:
+  - path: /etc/haproxy/haproxy.cfg
+    owner: root:root
+    permissions: '0644'
+    content: |
+      ${indent(6, haproxy_config)}
+  - path: /etc/keepalived/keepalived.conf
+    owner: root:root
+    permissions: '0600'
+    content: |
+      ${indent(6, keepalived_config)}
+  - path: /usr/local/sbin/check-haproxy
+    owner: root:root
+    permissions: '0755'
+    content: |
+      #!/bin/sh
+      exec /usr/bin/systemctl is-active --quiet haproxy.service
+  - path: /etc/systemd/system/haproxy.service.d/limits.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Service]
+      LimitNOFILE=262144
+runcmd:
+  - [systemctl, enable, --now, qemu-guest-agent.service]
+  - - bash
+    - -ec
+    - |
+      haproxy -c -f /etc/haproxy/haproxy.cfg
+      keepalived --config-test -f /etc/keepalived/keepalived.conf
+      systemctl daemon-reload
+      systemctl enable haproxy.service keepalived.service
+      systemctl restart haproxy.service
+      systemctl restart keepalived.service

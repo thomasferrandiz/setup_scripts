@@ -70,6 +70,20 @@ echo "Context: $(kubectl config current-context)"
 echo "Workload $workload: creating $ITERATIONS $description at QPS $QPS; results: $results"
 # Check access and metrics availability before creating any workload objects.
 kubectl --request-timeout=30s get nodes -o json > "$results/nodes.json"
+if ! jq -er '
+  [.items[]
+    | select((.metadata.labels // {}) | has("node-role.kubernetes.io/control-plane"))
+    | {name: .metadata.name, ip: ([.status.addresses[]?
+        | select(.type == "InternalIP" and (.address | contains(":") | not))
+        | .address] | first)}]
+  | if length == 0 then error("No control-plane nodes found")
+    elif any(.[]; .ip == null) then error("Control-plane node has no IPv4 InternalIP")
+    else sort_by(.name)[] | [.name, ("https://" + .ip + ":6443")] | @tsv
+    end
+' "$results/nodes.json" > "$results/apiserver-targets.tsv"; then
+  echo "Cannot discover API server metrics targets; refusing to run without per-server monitoring." >&2
+  exit 1
+fi
 sample_metrics() {
   if ! kubectl --request-timeout=30s get --raw /apis/metrics.k8s.io/v1beta1/nodes |
     jq -ce 'select(.items | length > 0)'; then
@@ -77,12 +91,12 @@ sample_metrics() {
     return 1
   fi
 }
-# Summarizes the API server answering this kubeconfig: every request kube-burner
-# sends goes to the same endpoint.
-sample_apiserver() {
-  local timestamp samples
+# Pin each scrape to a node: a load-balanced endpoint would mix unrelated counters.
+sample_apiserver_member() {
+  local member=$1 endpoint=$2 timestamp samples
   timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-  if ! samples=$(kubectl --request-timeout=30s get --raw /metrics | awk -v ts="$timestamp" '
+  if ! samples=$(kubectl --server="$endpoint" --request-timeout=30s get --raw /metrics |
+    awk -v ts="$timestamp" -v member="$member" '
     function label(series, name) {
       if (match(series, "[{,]" name "=\"[^\"]*\"")) {
         return substr(series, RSTART + length(name) + 3, RLENGTH - length(name) - 4)
@@ -114,12 +128,23 @@ sample_apiserver() {
     }
     END {
       if (!found) exit 1
-      for (series in totals) printf "%s\t%s\t%.17g\n", ts, series, totals[series]
+      for (series in totals) {
+        key = series
+        if (index(key, "{")) sub(/\{/, "{member=\"" member "\",", key)
+        else key = key "{member=\"" member "\"}"
+        printf "%s\t%s\t%.17g\n", ts, key, totals[series]
+      }
     }' | LC_ALL=C sort); then
-    echo "API server metrics unavailable; refusing to run without monitoring." >&2
+    echo "API server metrics unavailable from $member ($endpoint); refusing to run without monitoring." >&2
     return 1
   fi
   printf '%s\n' "$samples"
+}
+sample_apiserver() {
+  local member endpoint
+  while IFS=$'\t' read -r member endpoint; do
+    sample_apiserver_member "$member" "$endpoint" || return 1
+  done < "$results/apiserver-targets.tsv"
 }
 # etcd's own metrics, read through the API server's pod proxy. RKE2 serves them
 # on port 2381 of each server node only with etcd-expose-metrics enabled.

@@ -63,6 +63,9 @@ etcd_network_peer_round_trip_time_seconds_sum{{To="b"}} 0.5
 grpc_server_handled_total{{grpc_code="OK",grpc_method="Range"}} 5
 process_resident_memory_bytes 5.24288e+08''')
 elif "/metrics" in args:
+    if not any(arg in ("--server=https://192.168.64.10:6443",
+                       "--server=https://192.168.64.11:6443") for arg in args):
+        sys.exit("API metrics must bypass the load balancer")
     if os.environ.get("FAIL_APISERVER_METRICS") == "yes":
         print("forbidden", file=sys.stderr)
         sys.exit(1)
@@ -100,6 +103,15 @@ elif "--raw" in args:
         "usage": {"cpu": "100000000n", "memory": "512Mi"},
     }]
     print(json.dumps({"items": items}, indent=2))
+elif "nodes" in args and "json" in args:
+    print(json.dumps({"items": [] if os.environ.get("NO_CONTROL_PLANE") == "yes" else [
+        {"metadata": {"name": f"bench-cp-0{i}", "labels": {
+            "node-role.kubernetes.io/control-plane": "true",
+        }}, "status": {"addresses": [
+            {"type": "InternalIP", "address": f"192.168.64.{9+i}"},
+        ]}}
+        for i in (1, 2)
+    ]}))
 else:
     print('{"items": []}')
 """
@@ -167,6 +179,8 @@ class KubeBurnerTests(unittest.TestCase):
         samples = {}
         for line in files["apiserver-metrics.tsv"].splitlines():
             _, series, value = line.split("\t")
+            series = series.replace('member="bench-cp-01",', '').replace(
+                '{member="bench-cp-01"}', '')
             samples[series] = float(value)
         self.assertEqual(samples['apiserver_request_total{verb="LIST",code="200"}'], 1500002)
         self.assertEqual(samples['apiserver_request_total{verb="POST",code="429"}'], 4)
@@ -233,6 +247,27 @@ class KubeBurnerTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIsNone(started)
         self.assertIn("API server metrics unavailable", result.stderr)
+
+    def test_apiserver_metrics_are_separated_by_member(self):
+        result, _, files, _ = self.run_workload()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(files["apiserver-targets.tsv"].splitlines(), [
+            "bench-cp-01\thttps://192.168.64.10:6443",
+            "bench-cp-02\thttps://192.168.64.11:6443",
+        ])
+        series = {line.split("\t")[1] for line in files["apiserver-metrics.tsv"].splitlines()}
+        for member in ("bench-cp-01", "bench-cp-02"):
+            self.assertIn(f'process_resident_memory_bytes{{member="{member}"}}', series)
+            self.assertIn(
+                f'apiserver_request_total{{member="{member}",verb="LIST",code="200"}}',
+                series,
+            )
+
+    def test_missing_control_plane_prevents_start(self):
+        result, started, _, _ = self.run_workload(NO_CONTROL_PLANE="yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIsNone(started)
+        self.assertIn("Cannot discover API server metrics targets", result.stderr)
 
     def test_logged_errors_fail_the_run(self):
         result, started, _, _ = self.run_workload(WORKLOAD="api-intensive", LOG_ERROR="yes")

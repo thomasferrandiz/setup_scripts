@@ -1,0 +1,45 @@
+#cloud-config
+hostname: ${node_name}
+package_update: true
+packages:
+  - qemu-guest-agent
+  - docker
+  - iptables
+runcmd:
+  - [systemctl, enable, --now, qemu-guest-agent.service]
+  - [systemctl, enable, --now, docker.service]
+  - [/usr/local/sbin/rke2-server-sles.sh]
+write_files:
+  - path: /usr/local/sbin/rke2-server-sles.sh
+    owner: root:root
+    permissions: '0755'
+    content: |
+      ${indent(6, rke2_server_script)}
+  - path: /etc/rancher/rke2/config.yaml
+    owner: root:root
+    permissions: '0600'
+    content: |
+      write-kubeconfig-mode: "0644"
+      token: ${rke2_token}
+%{ if server_address != "" }
+      server: https://${server_address}:9345
+%{ endif }
+      cni: cilium
+      disable-kube-proxy: true
+      cluster-cidr: ${rke2_cluster_cidr}
+      service-cidr: 10.43.0.0/16
+      node-name: ${node_name}
+      tls-san:
+        - ${rke2_api_vip}
+      node-taint:
+        - "CriticalAddonsOnly=true:NoExecute"
+      etcd-expose-metrics: true
+users:
+  - name: opensuse
+    lock_passwd: true
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: users, docker
+    ssh_authorized_keys:
+      - ${harvester_public_key}
+      - ${bench_public_key}

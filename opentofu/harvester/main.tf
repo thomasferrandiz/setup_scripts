@@ -24,7 +24,7 @@ resource "random_password" "rke2_token" {
 }
 
 variable "rke2_api_vip" {
-  description = "Static vm-net-2085 address that kube-vip announces on the RKE2 servers for the API (6443) and supervisor (9345). Workers join through it."
+  description = "Static vm-net-2085 VIP managed by Keepalived on the HAProxy VMs for the API (6443) and supervisor (9345). Reserve it outside DHCP allocation."
   type        = string
   default     = "192.168.64.253"
 
@@ -56,20 +56,22 @@ locals {
   rke2_bootstrap_node = "bench-cp-01"
   rke2_worker_nodes   = toset([for i in range(1, var.rke2_worker_count + 1) : format("bench-wk-%02d", i)])
   rke2_joining_nodes  = toset(["bench-cp-02", "bench-cp-03"])
+  rke2_lb_nodes       = { "bench-lb-01" = 150, "bench-lb-02" = 100 }
+  rke2_server_ips = merge(
+    { (local.rke2_bootstrap_node) = local.rke2_bootstrap_ip },
+    { for name, vm in harvester_virtualmachine.bench : name => vm.network_interface[0].ip_address }
+  )
 
-  # Joining servers register directly with the bootstrap server: the Harvester
-  # load balancer cannot reach backends on the isolated vm-net-2085 network.
+  # Direct registration avoids a dependency cycle: HAProxy needs all server leases.
   rke2_bootstrap_ip = harvester_virtualmachine.bench_bootstrap.network_interface[0].ip_address
 
   rke2_cloud_config_vars = {
-    rke2_token         = random_password.rke2_token.result
-    rke2_server_script = file("${path.module}/rke2-server-sles.sh")
-    bench_public_key   = trimspace(file("${path.module}/bench.key.pub"))
-    rke2_api_vip       = var.rke2_api_vip
-    rke2_cluster_cidr  = local.rke2_cluster_cidr
-    kube_vip_manifest = templatefile("${path.module}/kube-vip.yaml", {
-      rke2_api_vip = var.rke2_api_vip
-    })
+    rke2_token           = random_password.rke2_token.result
+    rke2_server_script   = file("${path.module}/rke2-server-sles.sh")
+    bench_public_key     = trimspace(file("${path.module}/bench.key.pub"))
+    harvester_public_key = data.harvester_ssh_key.bench_dual_network.public_key
+    rke2_api_vip         = var.rke2_api_vip
+    rke2_cluster_cidr    = local.rke2_cluster_cidr
   }
 }
 
@@ -86,7 +88,7 @@ moved {
 resource "harvester_cloudinit_secret" "bench_bootstrap" {
   name      = "${local.rke2_bootstrap_node}-cloudinit"
   namespace = "default"
-  user_data = sensitive(templatefile("${path.module}/cloud-config.yml", merge(local.rke2_cloud_config_vars, {
+  user_data = sensitive(templatefile("${path.module}/server-cloud-config.yml", merge(local.rke2_cloud_config_vars, {
     node_name      = local.rke2_bootstrap_node
     server_address = ""
   })))
@@ -97,7 +99,7 @@ resource "harvester_cloudinit_secret" "bench" {
 
   name      = "${each.key}-cloudinit"
   namespace = "default"
-  user_data = sensitive(templatefile("${path.module}/cloud-config.yml", merge(local.rke2_cloud_config_vars, {
+  user_data = sensitive(templatefile("${path.module}/server-cloud-config.yml", merge(local.rke2_cloud_config_vars, {
     node_name      = each.key
     server_address = local.rke2_bootstrap_ip
   })))
@@ -190,10 +192,11 @@ resource "harvester_virtualmachine" "bench" {
   }
 
   network_interface {
-    name         = "default"
-    network_name = "default/vm-net-2085"
-    model        = "virtio"
-    type         = "bridge"
+    name           = "default"
+    network_name   = "default/vm-net-2085"
+    model          = "virtio"
+    type           = "bridge"
+    wait_for_lease = true
   }
 
   disk {
@@ -223,7 +226,87 @@ resource "harvester_virtualmachine" "bench" {
 
 }
 
-# Workers join through the kube-vip VIP rather than a specific server.
+resource "harvester_cloudinit_secret" "bench_lb" {
+  for_each = local.rke2_lb_nodes
+
+  name      = "${each.key}-cloudinit"
+  namespace = "default"
+  user_data = sensitive(templatefile("${path.module}/load-balancer-cloud-config.yml", {
+    node_name            = each.key
+    bench_public_key     = trimspace(file("${path.module}/bench.key.pub"))
+    harvester_public_key = data.harvester_ssh_key.bench_dual_network.public_key
+    haproxy_config = templatefile("${path.module}/haproxy.cfg", {
+      servers = local.rke2_server_ips
+    })
+    keepalived_config = templatefile("${path.module}/keepalived.conf", {
+      rke2_api_vip = var.rke2_api_vip
+      priority     = each.value
+    })
+  }))
+
+  lifecycle {
+    precondition {
+      condition     = alltrue([for ip in values(local.rke2_server_ips) : ip != null && ip != ""])
+      error_message = "All control-plane VMs must have DHCP addresses before rendering HAProxy backends."
+    }
+  }
+}
+
+resource "harvester_virtualmachine" "bench_lb" {
+  for_each = local.rke2_lb_nodes
+
+  name         = each.key
+  namespace    = "default"
+  labels       = { "node-role" = "load-balancer" }
+  cpu          = 2
+  memory       = "4Gi"
+  machine_type = "q35"
+  run_strategy = "RerunOnFailure"
+  ssh_keys     = ["default/tferrandiz"]
+
+  node_selector = {
+    "network.harvesterhci.io/cluster-net" = "true"
+  }
+
+  requests {
+    cpu    = "500m"
+    memory = "4Gi"
+  }
+
+  network_interface {
+    name         = "default"
+    network_name = "default/vm-net-2085"
+    model        = "virtio"
+    type         = "bridge"
+  }
+
+  disk {
+    name               = "disk-0"
+    type               = "disk"
+    size               = "20Gi"
+    bus                = "virtio"
+    boot_order         = 1
+    image              = "default/image-x49tz"
+    storage_class_name = "longhorn-image-x49tz"
+    access_mode        = "ReadWriteMany"
+    volume_mode        = "Block"
+    volume_name        = "${each.key}-disk-0"
+    auto_delete        = true
+  }
+
+  input {
+    name = "tablet"
+    type = "tablet"
+    bus  = "usb"
+  }
+
+  cloudinit {
+    type                  = "noCloud"
+    user_data_secret_name = harvester_cloudinit_secret.bench_lb[each.key].name
+  }
+}
+
+# Workers join through HAProxy rather than a specific server.
 resource "harvester_cloudinit_secret" "bench_worker" {
   for_each = local.rke2_worker_nodes
 
@@ -271,7 +354,8 @@ resource "harvester_cloudinit_secret" "bench_worker" {
 }
 
 resource "harvester_virtualmachine" "bench_worker" {
-  for_each = local.rke2_worker_nodes
+  for_each   = local.rke2_worker_nodes
+  depends_on = [harvester_virtualmachine.bench_lb]
 
   name      = each.key
   namespace = "default"
@@ -463,6 +547,7 @@ output "virtual_machines" {
       for name, vm in merge(
         { (local.rke2_bootstrap_node) = harvester_virtualmachine.bench_bootstrap },
         harvester_virtualmachine.bench,
+        harvester_virtualmachine.bench_lb,
         harvester_virtualmachine.bench_worker
         ) : name => {
         id         = vm.id

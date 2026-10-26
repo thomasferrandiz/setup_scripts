@@ -123,8 +123,9 @@ The runner saves a unique `results-<workload>-<timestamp>-*` directory containin
 - `nodes.json`: node capacity/allocatable resources for interpreting samples.
 - `metrics-baseline.json`: initial raw Metrics API response.
 - `apiserver-metrics.tsv` (both workloads): `timestamp<TAB>series<TAB>value`
-  samples from the API server's `/metrics` endpoint, taken at baseline, at each
-  interval and after the run. These include in-flight requests, API Priority and
+  samples from each control-plane API server's `/metrics` endpoint, taken at
+  baseline, at each interval and after the run. Every series has a `member`
+  label identifying the node. These include in-flight requests, API Priority and
   Fairness queued/executing/rejected requests, `apiserver_request_total` summed
   by verb and code, `apiserver_request_duration_seconds_{sum,count}` summed by
   verb, and API server process CPU seconds, resident memory and goroutines.
@@ -133,7 +134,7 @@ The runner saves a unique `results-<workload>-<timestamp>-*` directory containin
   summed by operation (get, list, create, update, delete...),
   `apiserver_storage_size_bytes` (etcd database size) and
   `apiserver_storage_objects` (total stored objects). Counters are cumulative:
-  compare consecutive samples for rates, and divide the
+  compare consecutive samples **for the same member** for rates, and divide the
   duration sum delta by the count delta for mean latency. Watch for `code="429"`
   or rising rejected requests (throttling) and 5xx codes.
 - `etcd-metrics.tsv`: the same format, sampled from every etcd member with a
@@ -143,11 +144,18 @@ The runner saves a unique `results-<workload>-<timestamp>-*` directory containin
   put/delete/range/txn counts, peer round-trip time, etcd process CPU and
   memory, and WAL fsync and backend commit durations, with histogram buckets.
 - `etcd-errors.log`: present only when an etcd sample failed.
+- `apiserver-targets.tsv`: the node names and direct HTTPS endpoints used for
+  API server scrapes.
 
-Only the API server answering the kubeconfig endpoint is sampled. With the kube-vip
-VIP this is the current VIP leader, which also receives all of kube-burner's
-requests. The other control-plane API servers are not sampled. The runner needs
-permission to read `/metrics` (cluster-admin has it).
+The runner discovers nodes labeled `node-role.kubernetes.io/control-plane`
+and scrapes each node's IPv4 InternalIP on port 6443 using the existing
+kubeconfig credentials and TLS verification. Run it from the jump host (or
+another machine that can reach all control-plane IPs). It refuses to start if
+discovery or any initial scrape fails. kube-burner still uses the kubeconfig's
+endpoint, normally the HAProxy VIP. Scraping through that VIP would mix
+counters from different servers and produce invalid rates. Older result files
+without a `member` label sampled only the server answering the VIP.
+The runner needs permission to read `/metrics` (cluster-admin has it).
 
 ### etcd metrics
 
@@ -155,7 +163,7 @@ The runner reads each member's metrics through the API server's pod proxy
 (`/api/v1/namespaces/kube-system/pods/etcd-<node>:2381/proxy/metrics`). It needs
 the same kubeconfig and cluster-admin access, and no direct network access to
 the nodes. RKE2 serves etcd metrics only on `127.0.0.1:2381` unless the server
-config contains `etcd-expose-metrics: true`. `../cloud-config.yml` sets this for
+config contains `etcd-expose-metrics: true`. `../server-cloud-config.yml` sets this for
 newly created servers; it then also listens, unauthenticated, on the node IP
 port 2381 inside the isolated cluster network. Servers created before that
 change need it once, one server at a time (etcd keeps quorum while one member
