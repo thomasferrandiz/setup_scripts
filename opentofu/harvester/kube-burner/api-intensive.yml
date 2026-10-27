@@ -9,6 +9,10 @@ jobs:
     qps: {{ .QPS }}
     burst: {{ .BURST }}
     namespacedIterations: true
+    # Create every namespace (one at a time) before the object loop. Otherwise each
+    # iteration waits for its namespace POST, capping the loop at ~22 iterations/s
+    # regardless of QPS; with pre-creation the object creates are QPS-bound.
+    preCreateNamespaces: {{ .PRE_CREATE_NAMESPACES }}
     namespace: api-intensive
     cleanup: true
     # Pre-loading runs a DaemonSet on every node (~9 minutes on 1000 nodes) and

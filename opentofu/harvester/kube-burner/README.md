@@ -71,7 +71,12 @@ plus a read phase. The prerequisites are the same as for kubelet-density-heavy
 
 1. **Create**: each iteration creates a namespace with a ConfigMap, a Secret, a
    Service, and a one-replica `pause` Deployment that mounts them. The job waits
-   for readiness, then holds for `HOLD_DURATION`.
+   for readiness, then holds for `HOLD_DURATION`. With `PRE_CREATE_NAMESPACES=true`
+   (the default), kube-burner first creates all namespaces, one at a time (about
+   20 s for 2000 on the 1000-worker cluster), so the object creates are limited
+   only by `QPS`/`BURST`. With `false`, each iteration waits for its own namespace
+   create, which caps the loop at about 22 iterations/s whatever the QPS; results
+   before this setting existed were produced that way.
 2. **Read**: `READ_ITERATIONS` times (default 5, max 100), cluster-wide LISTs of
    each kind (ConfigMaps, Secrets, Services, Deployments and Pods), then a GET of
    every object.
@@ -114,6 +119,11 @@ failures. The runner therefore exits **3** if `kube-burner.log` contains any
 
 The runner saves a unique `results-<workload>-<timestamp>-*` directory containing:
 
+- `parameters.env`: the effective run settings (`WORKLOAD`, `ITERATIONS`,
+  `QPS`, `BURST`, `HOLD_DURATION`, `READ_ITERATIONS`, `PATCH_ITERATIONS`,
+  `PRE_CREATE_NAMESPACES`, `TIMEOUT`, `SAMPLE_INTERVAL`, `ETCD_METRICS`, `KCM_METRICS`,
+  `KUBELET_METRICS`, `CILIUM_METRICS`, `NODE_SAMPLE_COUNT`), the kubeconfig context and the
+  start time, as `KEY=value` lines.
 - `kube-burner.log`: creation/readiness results and pod latency measurements.
 - `baseline.txt`, `node-usage.txt`, `after.txt`: per-node CPU (millicores),
   memory (MiB), and percentages, before/during/after the run. All nodes are
@@ -144,6 +154,15 @@ The runner saves a unique `results-<workload>-<timestamp>-*` directory containin
   put/delete/range/txn counts, peer round-trip time, etcd process CPU and
   memory, and WAL fsync and backend commit durations, with histogram buckets.
 - `etcd-errors.log`: present only when an etcd sample failed.
+- `kcm-metrics.tsv`: the same format, sampled from every kube-controller-manager
+  with a `member` label (see
+  [kube-controller-manager metrics](#kube-controller-manager-metrics)).
+- `kcm-errors.log`: present only when a kube-controller-manager sample failed.
+- `sampled-nodes.txt`, `kubelet-metrics.tsv`, `cilium-metrics.tsv`: the workers
+  sampled for node-side metrics, and their kubelet and cilium-agent samples, with
+  the node name as `member` (see
+  [kubelet and cilium-agent metrics](#kubelet-and-cilium-agent-metrics)).
+- `kubelet-errors.log`, `cilium-errors.log`: present only when a sample failed.
 - `apiserver-targets.tsv`: the node names and direct HTTPS endpoints used for
   API server scrapes.
 
@@ -186,6 +205,191 @@ commit p99 below about 25 ms. Compute them from the bucket deltas between two
 samples. Rising pending proposals or leader changes indicate etcd is the
 bottleneck. Compare `etcd_request_duration_seconds` with the API server's request
 latency to tell storage time from API server CPU time.
+
+### kube-controller-manager metrics
+
+The runner reads each kube-controller-manager's metrics through the API server's
+pod proxy over HTTPS
+(`/api/v1/namespaces/kube-system/pods/https:kube-controller-manager-<node>:10257/proxy/metrics`).
+They show whether its controllers are slowed by their own client-side rate limit
+(`kube-api-qps`, default 20, and `kube-api-burst`, default 30, per controller).
+The log only reports waits longer than 1 s, and only some of them, so the absence
+of `client-side throttling` log messages is not proof.
+
+By default RKE2 binds port 10257 to `127.0.0.1` and requires authorization for
+`/metrics`. `../server-cloud-config.yml` sets these for newly created servers:
+
+```yaml
+kube-controller-manager-arg:
+  - "bind-address=0.0.0.0"
+  - "authorization-always-allow-paths=/healthz,/readyz,/livez,/metrics"
+  - "kube-api-qps=100"
+  - "kube-api-burst=200"
+  - "concurrent-deployment-syncs=20"
+  - "concurrent-replicaset-syncs=20"
+```
+
+kube-controller-manager then serves `/metrics` without authorization on port
+10257 of the node IP, inside the isolated cluster network, as etcd does on port
+2381. The last four values raise the controllers' client limits and worker
+counts; with the defaults the leader spent ~225 ms per request waiting for its
+own rate limiter (run 07). Existing servers need the setting once,
+one server at a time. Use a drop-in file, because appending a second
+`kube-controller-manager-arg` key to `config.yaml` would duplicate it:
+
+```bash
+# On each bench-cp-* node, waiting for the node to be Ready before the next one.
+sudo mkdir -p /etc/rancher/rke2/config.yaml.d
+sudo tee /etc/rancher/rke2/config.yaml.d/50-kcm-metrics.yaml <<'EOF'
+kube-controller-manager-arg:
+  - "bind-address=0.0.0.0"
+  - "authorization-always-allow-paths=/healthz,/readyz,/livez,/metrics"
+  - "kube-api-qps=100"
+  - "kube-api-burst=200"
+  - "concurrent-deployment-syncs=20"
+  - "concurrent-replicaset-syncs=20"
+EOF
+sudo systemctl restart rke2-server
+```
+
+If `config.yaml` already sets `kube-controller-manager-arg`, add the values
+to that list instead. To check the new flags on the running process:
+
+```bash
+kubectl -n kube-system get pods -l component=kube-controller-manager \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{range .spec.containers[0].args[*]}  {@}{"\n"}{end}{end}' \
+  | grep -E 'kube-controller-manager-|kube-api-|concurrent-(deployment|replicaset)'
+```
+
+`KCM_METRICS=auto` (default) samples kube-controller-manager if it answers at
+baseline, otherwise it prints a warning and continues without it.
+`KCM_METRICS=required` refuses to start instead, and `KCM_METRICS=off` skips it.
+A failed sample during the run is recorded in `kcm-errors.log` and does not
+stop the benchmark.
+
+Sampled series (all with a `member` label):
+
+- `rest_client_rate_limiter_duration_seconds_{sum,count}` by verb, and its
+  `_bucket` by `le`: the time requests waited for the client-side rate limiter,
+  summed over all controllers.
+- `rest_client_request_duration_seconds_{sum,count}` by verb, and
+  `rest_client_requests_total` by method and code (including `409` conflicts).
+- `workqueue_depth`, `workqueue_adds_total`, `workqueue_retries_total` and
+  `workqueue_queue_duration_seconds_{sum,count}` by queue `name`, for example
+  `deployment`, `replicaset` or `endpointslice`.
+- `leader_election_master_status` (1 on the leader; only the leader runs
+  controllers), process CPU seconds and resident memory.
+
+To interpret them, take deltas between consecutive samples of the leader. The
+mean rate-limiter wait is the `_sum` delta divided by the `_count` delta. A mean
+wait of tens of milliseconds or more, or a `_sum` that grows by more seconds than
+the sample interval, means the controllers were throttled. A growing
+`workqueue_depth{name="deployment"}` while the API server is idle, with a large
+`workqueue_queue_duration_seconds` mean, shows a controller backlog. If the
+backlog grows without throttling, the cause is elsewhere, for example the
+controller's worker count (`concurrent-deployment-syncs`, 20 here, default 5).
+
+```bash
+grep 'leader_election_master_status' results-*/kcm-metrics.tsv | tail -3
+grep 'rest_client_rate_limiter_duration_seconds_sum' results-*/kcm-metrics.tsv | tail
+grep 'workqueue_depth{member="bench-cp-01",name="deployment"}' results-*/kcm-metrics.tsv
+```
+
+### kubelet and cilium-agent metrics
+
+When kube-burner reports a high pod `Ready` latency while `PodScheduled` is low,
+the time is spent on the node. The runner samples `NODE_SAMPLE_COUNT` (default 5,
+at most 100) workers, evenly spaced in natural name order (with 1000 workers:
+`bench-wk-01`, `-201`, `-401`, `-601`, `-801`), and lists them in
+`sampled-nodes.txt`. Pods land on any worker, so a few nodes are representative,
+and the sampling cost stays independent of cluster size.
+
+- **kubelet**, through the API server's node proxy
+  (`/api/v1/nodes/<node>/proxy/metrics`). This needs no cluster change, only the
+  `nodes/proxy` permission (cluster-admin has it).
+- **cilium-agent**, through the pod proxy on port 9962
+  (`/api/v1/namespaces/kube-system/pods/<cilium-pod>:9962/proxy/metrics`). The
+  agent serves metrics only with `prometheus.enabled: true` in the rke2-cilium
+  chart values, which `../rke2-server-sles.sh` sets for new clusters. The agent
+  pods are resolved once at baseline; an agent that restarts during the run
+  then shows up in `cilium-errors.log`.
+
+To enable the agent metrics on an existing cluster, add the values to the
+manifest that `../rke2-server-sles.sh` wrote on bench-cp-01. RKE2 watches that
+directory and applies the change; editing the HelmChartConfig with kubectl alone
+would be reverted from this file.
+
+```bash
+# On bench-cp-01, under "valuesContent: |-", at the same indentation as ipv6:
+sudo vi /var/lib/rancher/rke2/server/manifests/rke2-cilium-config.yaml
+#     prometheus:
+#       enabled: true
+# Then, from the jump host:
+kubectl -n kube-system get helmchartconfig rke2-cilium -o jsonpath='{.spec.valuesContent}'
+kubectl -n kube-system rollout status daemonset/cilium
+```
+
+This changes the agent DaemonSet (a new host port), so every agent restarts,
+two nodes at a time by default (`updateStrategy.rollingUpdate.maxUnavailable: 2`).
+With 1000 workers that takes a long time. To go faster, also set
+`updateStrategy: {rollingUpdate: {maxUnavailable: 10%}}` in the same values.
+Existing pods keep their network while their agent restarts.
+
+`KUBELET_METRICS` and `CILIUM_METRICS` work like `KCM_METRICS`: `auto`
+(default) samples if every sampled node answers at baseline and warns
+otherwise, `required` refuses to start, and `off` skips the component.
+
+Sampled kubelet series:
+
+- `kubelet_run_podsandbox_duration_seconds_{sum,count}` and `_bucket` by `le`,
+  and `kubelet_run_podsandbox_errors_total`: sandbox creation, which includes
+  the CNI ADD and therefore the wait for cilium-agent.
+- `kubelet_runtime_operations_duration_seconds_{sum,count}` and
+  `kubelet_runtime_operations_errors_total` by `operation_type`
+  (`run_podsandbox`, `create_container`, `start_container`, `pull_image`...).
+- `kubelet_pod_start_duration_seconds_{sum,count}` and
+  `kubelet_pod_start_sli_duration_seconds_{sum,count}` (without image pulls),
+  `kubelet_pod_worker_duration_seconds_{sum,count}` by `operation_type`,
+  `kubelet_pleg_relist_duration_seconds_{sum,count}`, and `kubelet_running_pods`
+  and `kubelet_running_containers`.
+- The kubelet's API client: `rest_client_rate_limiter_duration_seconds_{sum,count}`
+  and `rest_client_request_duration_seconds_{sum,count}` by verb, and
+  `rest_client_requests_total` by method and code. Rejected status updates show
+  up here as `429`s.
+- Process CPU seconds and resident memory.
+
+Sampled cilium-agent series:
+
+- `cilium_endpoint_regeneration_time_stats_seconds_{sum,count}` by `scope`,
+  `cilium_endpoint_regenerations_total` by `outcome`, and `cilium_endpoint_state`
+  by `endpoint_state` (endpoints stuck in `waiting-for-identity` or
+  `regenerating`).
+- The agent API rate limiter, which paces CNI ADD calls (`api_call="endpoint-create"`):
+  `cilium_api_limiter_processed_requests_total` by `api_call` and `outcome`,
+  and `cilium_api_limiter_{wait_duration_seconds,processing_duration_seconds,requests_in_flight,rate_limit,adjustment_factor}`
+  by `api_call` and `value` (mean, min, max, limit...).
+- `cilium_agent_api_process_time_seconds_{sum,count}` by method and path.
+- The agent's Kubernetes client: `cilium_k8s_client_api_calls_total` by method
+  and return code, and `cilium_k8s_client_{api_latency_time,rate_limiter_duration}_seconds_{sum,count}`
+  by method.
+- `cilium_identity` by type, `cilium_policy_regeneration_total`,
+  `cilium_errors_warnings_total` by level, process CPU seconds and resident memory.
+
+To interpret them, compare the deltas per member during pod creation. A mean
+`run_podsandbox` duration (`_sum` delta divided by `_count` delta) close to the
+pod `Ready` latency puts the delay in the CNI. A large mean
+`cilium_api_limiter_wait_duration_seconds{api_call="endpoint-create"}` points to
+the agent's API rate limiter. A long endpoint regeneration time or many
+`waiting-for-identity` endpoints points to identity allocation. `429`s or a
+large rate-limiter wait in `cilium_k8s_client_*` point to the agent's
+Kubernetes client.
+
+```bash
+cat results-*/sampled-nodes.txt
+grep 'kubelet_run_podsandbox_duration_seconds_sum' results-*/kubelet-metrics.tsv | tail
+grep 'cilium_api_limiter_wait_duration_seconds' results-*/cilium-metrics.tsv | grep endpoint-create | tail
+grep 'cilium_endpoint_state' results-*/cilium-metrics.tsv | tail
+```
 
 ```bash
 tail -f results-*/node-usage.txt

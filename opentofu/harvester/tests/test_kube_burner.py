@@ -25,6 +25,7 @@ if Path(sys.argv[0]).name == "kube-burner":
         "burst": os.environ["BURST"],
         "read": os.environ["READ_ITERATIONS"],
         "patch": os.environ["PATCH_ITERATIONS"],
+        "pre_create": os.environ["PRE_CREATE_NAMESPACES"],
         "args": sys.argv[1:],
     }))
     def stop(signum, frame):
@@ -37,6 +38,9 @@ if Path(sys.argv[0]).name == "kube-burner":
     sys.exit(int(os.environ.get("BURNER_STATUS", "0")))
 args = sys.argv[1:]
 if args == ["config", "current-context"]:
+    if os.environ.get("NO_CONTEXT") == "yes":
+        print("error: current-context is not set", file=sys.stderr)
+        sys.exit(1)
     print("test-rke2")
 elif "top" in args:
     print("NAME CPU(cores) CPU% MEMORY(bytes) MEMORY%")
@@ -44,6 +48,76 @@ elif "top" in args:
 elif "component=etcd" in args:
     if os.environ.get("NO_ETCD") != "yes":
         print("etcd-bench-cp-01\netcd-bench-cp-02")
+elif "component=kube-controller-manager" in args:
+    if os.environ.get("NO_KCM") != "yes":
+        print("kube-controller-manager-bench-cp-01\nkube-controller-manager-bench-cp-02")
+elif any(a.endswith(":10257/proxy/metrics") for a in args):
+    path = next(a for a in args if a.endswith(":10257/proxy/metrics"))
+    if os.environ.get("FAIL_KCM") == "yes" or "/pods/https:kube-controller-manager-" not in path:
+        print("Error from server (ServiceUnavailable): connection refused", file=sys.stderr)
+        sys.exit(1)
+    leader = 1 if "-bench-cp-01:" in path else 0
+    limiter = "" if os.environ.get("NO_RATE_LIMITER") == "yes" else '''
+rest_client_rate_limiter_duration_seconds_bucket{host="127.0.0.1:6443",verb="PUT",le="0.005"} 10
+rest_client_rate_limiter_duration_seconds_bucket{host="127.0.0.1:6443",verb="PUT",le="+Inf"} 30
+rest_client_rate_limiter_duration_seconds_bucket{host="127.0.0.1:6443",verb="POST",le="+Inf"} 5
+rest_client_rate_limiter_duration_seconds_sum{host="127.0.0.1:6443",verb="PUT"} 12.5
+rest_client_rate_limiter_duration_seconds_sum{host="127.0.0.1:6443",verb="POST"} 0.5
+rest_client_rate_limiter_duration_seconds_count{host="127.0.0.1:6443",verb="PUT"} 30
+rest_client_rate_limiter_duration_seconds_count{host="127.0.0.1:6443",verb="POST"} 5'''
+    print(f'''# TYPE rest_client_requests_total counter
+rest_client_requests_total{{code="200",host="127.0.0.1:6443",method="PUT"}} 20
+rest_client_requests_total{{code="200",host="10.43.0.1:443",method="PUT"}} 3
+rest_client_requests_total{{code="409",host="127.0.0.1:6443",method="PUT"}} 7{limiter}
+rest_client_request_duration_seconds_sum{{host="127.0.0.1:6443",verb="PUT"}} 0.25
+rest_client_request_duration_seconds_count{{host="127.0.0.1:6443",verb="PUT"}} 30
+workqueue_depth{{name="deployment"}} 42
+workqueue_adds_total{{name="deployment"}} 2000
+workqueue_adds_total{{name="replicaset"}} 4000
+workqueue_work_duration_seconds_sum{{name="deployment"}} 1
+leader_election_master_status{{name="kube-controller-manager"}} {leader}
+apiserver_audit_event_total 9
+process_cpu_seconds_total 12.5''')
+elif "k8s-app=cilium" in args:
+    if os.environ.get("NO_CILIUM") != "yes":
+        for pod, node in (("cilium-cp", "bench-cp-01"), ("cilium-a", "bench-wk-1"),
+                          ("cilium-b", "bench-wk-2"), ("cilium-c", "bench-wk-10"),
+                          ("cilium-d", "bench-wk-100")):
+            print(f"{pod}\t{node}")
+elif any(a.endswith(":9962/proxy/metrics") for a in args):
+    if os.environ.get("FAIL_CILIUM") == "yes":
+        print("Error from server (ServiceUnavailable): connection refused", file=sys.stderr)
+        sys.exit(1)
+    print('''# TYPE cilium_endpoint_state gauge
+cilium_endpoint_state{endpoint_state="ready"} 3
+cilium_endpoint_state{endpoint_state="waiting-for-identity"} 2
+cilium_endpoint_regeneration_time_stats_seconds_sum{scope="total",status="success"} 1.5
+cilium_endpoint_regeneration_time_stats_seconds_sum{scope="total",status="failure"} 0.5
+cilium_endpoint_regeneration_time_stats_seconds_count{scope="total",status="success"} 4
+cilium_api_limiter_wait_duration_seconds{api_call="endpoint-create",value="mean"} 2.5
+cilium_api_limiter_processed_requests_total{api_call="endpoint-create",outcome="success",return_code="201"} 7
+cilium_k8s_client_api_calls_total{endpoint="/api/v1",method="PATCH",return_code="200"} 10
+cilium_k8s_client_api_calls_total{endpoint="/apis/cilium.io",method="PATCH",return_code="200"} 5
+cilium_k8s_client_api_latency_time_seconds_sum{method="PATCH",path="/api/v1"} 0.75
+cilium_bpf_map_ops_total{map_name="x",operation="update",outcome="success"} 99
+process_cpu_seconds_total 3''')
+elif any(a.startswith("/api/v1/nodes/") and a.endswith("/proxy/metrics") for a in args):
+    if os.environ.get("FAIL_KUBELET") == "yes":
+        print("Error from server (Forbidden): nodes/proxy", file=sys.stderr)
+        sys.exit(1)
+    print('''# TYPE kubelet_running_pods gauge
+kubelet_running_pods 4
+kubelet_run_podsandbox_duration_seconds_sum{runtime_handler=""} 30
+kubelet_run_podsandbox_duration_seconds_sum{runtime_handler="runc"} 15
+kubelet_run_podsandbox_duration_seconds_count{runtime_handler=""} 3
+kubelet_run_podsandbox_duration_seconds_bucket{runtime_handler="",le="10"} 1
+kubelet_run_podsandbox_duration_seconds_bucket{runtime_handler="",le="+Inf"} 3
+kubelet_runtime_operations_duration_seconds_sum{operation_type="run_podsandbox"} 45
+kubelet_runtime_operations_duration_seconds_sum{operation_type="pull_image"} 2
+rest_client_requests_total{code="429",host="10.0.0.1:6443",method="PATCH"} 6
+rest_client_requests_total{code="429",host="127.0.0.1:6443",method="PATCH"} 1
+kubelet_http_requests_total{method="GET",path="metrics"} 8
+storage_operation_duration_seconds_count{operation_name="volume_mount"} 5''')
 elif any(a.endswith(":2381/proxy/metrics") for a in args):
     if os.environ.get("FAIL_ETCD") == "yes":
         print("Error from server (ServiceUnavailable): connection refused", file=sys.stderr)
@@ -111,6 +185,9 @@ elif "nodes" in args and "json" in args:
             {"type": "InternalIP", "address": f"192.168.64.{9+i}"},
         ]}}
         for i in (1, 2)
+    ] + [
+        {"metadata": {"name": f"bench-wk-{i}", "labels": {}}, "status": {"addresses": []}}
+        for i in (100, 10, 2, 1)
     ]}))
 else:
     print('{"items": []}')
@@ -132,6 +209,8 @@ class KubeBurnerTests(unittest.TestCase):
                 if key not in {
                     "WORKLOAD", "ITERATIONS", "HOLD_DURATION", "QPS", "BURST",
                     "READ_ITERATIONS", "PATCH_ITERATIONS", "TIMEOUT", "ETCD_METRICS",
+                    "PRE_CREATE_NAMESPACES", "KCM_METRICS", "KUBELET_METRICS",
+                    "CILIUM_METRICS", "NODE_SAMPLE_COUNT",
                 }
             }
             environment.update({
@@ -230,6 +309,139 @@ class KubeBurnerTests(unittest.TestCase):
         self.assertNotIn("etcd-metrics.tsv", files)
         self.assertNotIn("etcd", result.stderr)
 
+    def test_samples_kcm_rate_limiter_and_workqueues_per_member(self):
+        result, _, files, _ = self.run_workload(WORKLOAD="api-intensive")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("kcm-errors.log", files)
+        self.assertIn("kcm-metrics.tsv", result.stdout)
+        samples = {}
+        for line in files["kcm-metrics.tsv"].splitlines():
+            _, series, value = line.split("\t")
+            samples[series] = float(value)
+        m = 'member="bench-cp-01"'
+        self.assertEqual(samples[f'rest_client_rate_limiter_duration_seconds_sum{{{m},verb="PUT"}}'], 12.5)
+        self.assertEqual(samples[f'rest_client_rate_limiter_duration_seconds_count{{{m},verb="PUT"}}'], 30)
+        self.assertEqual(samples[f'rest_client_rate_limiter_duration_seconds_bucket{{{m},le="+Inf"}}'], 35)
+        self.assertEqual(samples[f'rest_client_requests_total{{{m},method="PUT",code="200"}}'], 23)
+        self.assertEqual(samples[f'rest_client_requests_total{{{m},method="PUT",code="409"}}'], 7)
+        self.assertEqual(samples[f'rest_client_request_duration_seconds_sum{{{m},verb="PUT"}}'], 0.25)
+        self.assertEqual(samples[f'workqueue_depth{{{m},name="deployment"}}'], 42)
+        self.assertEqual(samples[f'workqueue_adds_total{{{m},name="replicaset"}}'], 4000)
+        self.assertEqual(samples[f'leader_election_master_status{{{m}}}'], 1)
+        self.assertEqual(samples['leader_election_master_status{member="bench-cp-02"}'], 0)
+        self.assertEqual(samples[f'process_cpu_seconds_total{{{m}}}'], 12.5)
+        self.assertFalse(any(s.startswith(("apiserver_", "workqueue_work_")) for s in samples))
+        self.assertIn("KCM_METRICS=auto", files["parameters.env"])
+
+    def test_kcm_metrics_unavailable(self):
+        for settings in ({"FAIL_KCM": "yes"}, {"NO_KCM": "yes"}):
+            with self.subTest(settings=settings):
+                result, started, files, _ = self.run_workload(**settings)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIsNotNone(started)
+                self.assertNotIn("kcm-metrics.tsv", files)
+                self.assertIn("kube-controller-manager metrics unavailable", result.stderr)
+                result, started, _, _ = self.run_workload(KCM_METRICS="required", **settings)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIsNone(started)
+                self.assertIn("authorization-always-allow-paths", result.stderr)
+
+    def test_kcm_without_rate_limiter_metric_warns(self):
+        result, started, files, _ = self.run_workload(NO_RATE_LIMITER="yes")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNotNone(started)
+        self.assertIn("kcm-metrics.tsv", files)
+        self.assertIn("no rest_client_rate_limiter_duration_seconds", result.stderr)
+
+    def test_kcm_metrics_off(self):
+        result, _, files, _ = self.run_workload(KCM_METRICS="off", FAIL_KCM="yes")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("kcm-metrics.tsv", files)
+        self.assertNotIn("kube-controller-manager", result.stderr)
+
+    @staticmethod
+    def samples(text):
+        samples = {}
+        for line in text.splitlines():
+            _, series, value = line.split("\t")
+            samples[series] = float(value)
+        return samples
+
+    def test_samples_kubelet_and_cilium_on_sampled_workers(self):
+        result, _, files, _ = self.run_workload(WORKLOAD="api-intensive")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(files["sampled-nodes.txt"].splitlines(),
+                         ["bench-wk-1", "bench-wk-2", "bench-wk-10", "bench-wk-100"])
+        self.assertNotIn("kubelet-errors.log", files)
+        self.assertNotIn("cilium-errors.log", files)
+        self.assertIn("kubelet-metrics.tsv", result.stdout)
+        self.assertIn("cilium-metrics.tsv", result.stdout)
+        parameters = files["parameters.env"]
+        for setting in ("KUBELET_METRICS=auto", "CILIUM_METRICS=auto", "NODE_SAMPLE_COUNT=5"):
+            self.assertIn(setting, parameters)
+
+        kubelet = self.samples(files["kubelet-metrics.tsv"])
+        m = 'member="bench-wk-10"'
+        self.assertEqual(kubelet[f'kubelet_running_pods{{{m}}}'], 4)
+        self.assertEqual(kubelet[f'kubelet_run_podsandbox_duration_seconds_sum{{{m}}}'], 45)
+        self.assertEqual(kubelet[f'kubelet_run_podsandbox_duration_seconds_count{{{m}}}'], 3)
+        self.assertEqual(kubelet[f'kubelet_run_podsandbox_duration_seconds_bucket{{{m},le="10"}}'], 1)
+        self.assertEqual(kubelet[
+            f'kubelet_runtime_operations_duration_seconds_sum{{{m},operation_type="run_podsandbox"}}'], 45)
+        self.assertEqual(kubelet[f'rest_client_requests_total{{{m},method="PATCH",code="429"}}'], 7)
+        self.assertFalse(any(s.startswith(("kubelet_http_", "storage_")) for s in kubelet))
+        self.assertNotIn('kubelet_running_pods{member="bench-cp-01"}', kubelet)
+
+        cilium = self.samples(files["cilium-metrics.tsv"])
+        m = 'member="bench-wk-100"'
+        self.assertEqual(cilium[f'cilium_endpoint_state{{{m},endpoint_state="waiting-for-identity"}}'], 2)
+        self.assertEqual(cilium[
+            f'cilium_endpoint_regeneration_time_stats_seconds_sum{{{m},scope="total"}}'], 2)
+        self.assertEqual(cilium[
+            f'cilium_api_limiter_wait_duration_seconds{{{m},api_call="endpoint-create",value="mean"}}'], 2.5)
+        self.assertEqual(cilium[
+            f'cilium_api_limiter_processed_requests_total{{{m},api_call="endpoint-create",outcome="success"}}'], 7)
+        self.assertEqual(cilium[f'cilium_k8s_client_api_calls_total{{{m},method="PATCH",return_code="200"}}'], 15)
+        self.assertEqual(cilium[f'cilium_k8s_client_api_latency_time_seconds_sum{{{m},method="PATCH"}}'], 0.75)
+        self.assertEqual(cilium[f'process_cpu_seconds_total{{{m}}}'], 3)
+        self.assertFalse(any(s.startswith("cilium_bpf_") for s in cilium))
+        self.assertFalse(any('member="bench-cp-01"' in s for s in cilium))
+
+    def test_node_sample_count_spreads_workers_in_natural_order(self):
+        result, _, files, _ = self.run_workload(NODE_SAMPLE_COUNT="2")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(files["sampled-nodes.txt"].splitlines(), ["bench-wk-1", "bench-wk-10"])
+        for name in ("kubelet-metrics.tsv", "cilium-metrics.tsv"):
+            members = {line.split("\t")[1].split('member="')[1].split('"')[0]
+                       for line in files[name].splitlines()}
+            self.assertEqual(members, {"bench-wk-1", "bench-wk-10"}, name)
+
+    def test_node_metrics_unavailable(self):
+        for settings, mode, file, hint in (
+            ({"FAIL_KUBELET": "yes"}, "KUBELET_METRICS", "kubelet-metrics.tsv", "nodes/proxy"),
+            ({"FAIL_CILIUM": "yes"}, "CILIUM_METRICS", "cilium-metrics.tsv", "prometheus.enabled"),
+            ({"NO_CILIUM": "yes"}, "CILIUM_METRICS", "cilium-metrics.tsv", "prometheus.enabled"),
+        ):
+            with self.subTest(settings=settings):
+                result, started, files, _ = self.run_workload(**settings)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIsNotNone(started)
+                self.assertNotIn(file, files)
+                self.assertIn("metrics unavailable", result.stderr)
+                result, started, _, _ = self.run_workload(**{mode: "required"}, **settings)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIsNone(started)
+                self.assertIn(hint, result.stderr)
+
+    def test_node_metrics_off(self):
+        result, _, files, _ = self.run_workload(
+            KUBELET_METRICS="off", CILIUM_METRICS="off", FAIL_KUBELET="yes", FAIL_CILIUM="yes")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for name in ("sampled-nodes.txt", "kubelet-metrics.tsv", "cilium-metrics.tsv"):
+            self.assertNotIn(name, files)
+        self.assertNotIn("kubelet", result.stderr)
+        self.assertNotIn("cilium", result.stderr)
+
     def test_api_intensive_accepts_explicit_settings(self):
         result, started, _, _ = self.run_workload(
             WORKLOAD="api-intensive", ITERATIONS="5000", QPS="200", BURST="400",
@@ -241,6 +453,40 @@ class KubeBurnerTests(unittest.TestCase):
             ("5000", "200", "400", "10", "1"),
         )
         self.assertIn("--timeout=4h", started["args"])
+
+    def test_records_effective_parameters(self):
+        result, _, files, _ = self.run_workload(
+            WORKLOAD="api-intensive", ITERATIONS="2000", QPS="200", TIMEOUT="4h",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        parameters = dict(
+            line.split("=", 1) for line in files["parameters.env"].splitlines()
+        )
+        self.assertEqual(parameters["WORKLOAD"], "api-intensive")
+        self.assertEqual(parameters["ITERATIONS"], "2000")
+        self.assertEqual((parameters["QPS"], parameters["BURST"]), ("200", "200"))
+        self.assertEqual(parameters["HOLD_DURATION"], "1m")
+        self.assertEqual(
+            (parameters["READ_ITERATIONS"], parameters["PATCH_ITERATIONS"]), ("5", "3"))
+        self.assertEqual(parameters["PRE_CREATE_NAMESPACES"], "true")
+        self.assertEqual(parameters["TIMEOUT"], "4h")
+        self.assertEqual(parameters["SAMPLE_INTERVAL"], "1")
+        self.assertEqual(parameters["ETCD_METRICS"], "auto")
+        self.assertRegex(parameters["STARTED"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+        self.assertIn("CONTEXT", parameters)
+
+    def test_pre_create_namespaces_can_be_disabled(self):
+        result, started, files, _ = self.run_workload(
+            WORKLOAD="api-intensive", PRE_CREATE_NAMESPACES="false")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(started["pre_create"], "false")
+        self.assertIn("PRE_CREATE_NAMESPACES=false", files["parameters.env"])
+
+    def test_missing_current_context_does_not_stop_the_run(self):
+        result, started, files, _ = self.run_workload(NO_CONTEXT="yes")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNotNone(started)
+        self.assertIn("CONTEXT=(not set)", files["parameters.env"])
 
     def test_apiserver_metrics_failure_prevents_start(self):
         result, started, _, _ = self.run_workload(WORKLOAD="api-intensive", FAIL_APISERVER_METRICS="yes")
@@ -289,6 +535,9 @@ class KubeBurnerTests(unittest.TestCase):
             {"WORKLOAD": "other"}, {"WORKLOAD": "api-intensive", "ITERATIONS": "5001"},
             {"QPS": "0"}, {"QPS": "1001"}, {"BURST": "x"}, {"READ_ITERATIONS": "101"},
             {"PATCH_ITERATIONS": "0"}, {"TIMEOUT": "2"}, {"ETCD_METRICS": "yes"},
+            {"PRE_CREATE_NAMESPACES": "yes"}, {"KCM_METRICS": "yes"},
+            {"KUBELET_METRICS": "yes"}, {"CILIUM_METRICS": "yes"},
+            {"NODE_SAMPLE_COUNT": "0"}, {"NODE_SAMPLE_COUNT": "101"},
         ):
             with self.subTest(settings=settings):
                 result, started, _, _ = self.run_workload(**settings)

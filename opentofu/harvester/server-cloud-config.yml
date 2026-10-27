@@ -34,6 +34,16 @@ write_files:
       node-taint:
         - "CriticalAddonsOnly=true:NoExecute"
       etcd-expose-metrics: true
+      # The first two let the kube-burner runner read /metrics through the API
+      # server's pod proxy. The rest lift the default client limits (qps 20,
+      # burst 30, 5 workers), which throttled the controllers on 1000 nodes.
+      kube-controller-manager-arg:
+        - "bind-address=0.0.0.0"
+        - "authorization-always-allow-paths=/healthz,/readyz,/livez,/metrics"
+        - "kube-api-qps=100"
+        - "kube-api-burst=200"
+        - "concurrent-deployment-syncs=20"
+        - "concurrent-replicaset-syncs=20"
 users:
   - name: opensuse
     lock_passwd: true

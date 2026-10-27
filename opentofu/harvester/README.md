@@ -17,7 +17,18 @@ only; pods that must run on the control plane need a
 matching toleration. The servers also set `etcd-expose-metrics: true`, so etcd
 serves its Prometheus metrics, unauthenticated, on port 2381 of each server's
 node IP. The kube-burner runner reads them through the API server
-(see [etcd metrics](./kube-burner/README.md#etcd-metrics)).
+(see [etcd metrics](./kube-burner/README.md#etcd-metrics)). They also pass
+`bind-address=0.0.0.0` and
+`authorization-always-allow-paths=/healthz,/readyz,/livez,/metrics` to
+kube-controller-manager, which then serves its metrics without authorization on
+port 10257 of the node IP
+(see [kube-controller-manager metrics](./kube-burner/README.md#kube-controller-manager-metrics)).
+They also raise kube-controller-manager's client limits and worker counts
+(`kube-api-qps=100`, `kube-api-burst=200`, `concurrent-deployment-syncs=20`,
+`concurrent-replicaset-syncs=20`). With the defaults (20, 30, 5 and 5), the
+controllers throttled themselves on 1000 nodes and took ~8 minutes to make 2000
+Deployments Ready (see
+[run 07](./kube-burner-results/1000wk_cilium_haproxy/run_07_analysis.md)).
 
 The VMs connect to `default/vm-net-2085`. The Harvester load balancer cannot
 reach backends on this isolated network, so joining servers do not use it.
@@ -218,6 +229,9 @@ IPv4-only networking (`10.44.0.0/14` pod CIDR and `10.43.0.0/16` service
 CIDR). The guest kernel must be version 5.8 or newer for Cilium kube-proxy
 replacement. The Cilium operator also tolerates the control-plane
 `CriticalAddonsOnly` taint (the agent and envoy already tolerate all taints).
+The agents serve their Prometheus metrics on port 9962 of each node
+(`prometheus.enabled`), which the kube-burner runner samples on a few workers
+(see [kubelet and cilium-agent metrics](./kube-burner/README.md#kubelet-and-cilium-agent-metrics)).
 
 Terraform generates a shared RKE2 token and stores it in the Terraform state.
 Terraform stores each VM's cloud-init in a Harvester secret to avoid the

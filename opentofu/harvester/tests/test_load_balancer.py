@@ -136,6 +136,14 @@ locals {
             self.assertEqual(rke2["cluster-cidr"], "10.44.0.0/14")
             self.assertEqual(rke2["node-taint"], ["CriticalAddonsOnly=true:NoExecute"])
             self.assertTrue(rke2["etcd-expose-metrics"])
+            self.assertEqual(rke2["kube-controller-manager-arg"], [
+                "bind-address=0.0.0.0",
+                "authorization-always-allow-paths=/healthz,/readyz,/livez,/metrics",
+                "kube-api-qps=100",
+                "kube-api-burst=200",
+                "concurrent-deployment-syncs=20",
+                "concurrent-replicaset-syncs=20",
+            ])
             if name == "bench-cp-01":
                 self.assertNotIn("server", rke2)
             else:

@@ -28,6 +28,10 @@ spec:
       enabled: true
     ipv6:
       enabled: false
+    # Agent metrics on port 9962 of every node, read by the kube-burner runner
+    # through the API server's pod proxy.
+    prometheus:
+      enabled: true
     # The defaults plus the control-plane CriticalAddonsOnly taint; the agent
     # and envoy already tolerate every taint.
     operator:
