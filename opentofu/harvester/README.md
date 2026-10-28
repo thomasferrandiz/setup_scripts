@@ -29,6 +29,18 @@ They also raise kube-controller-manager's client limits and worker counts
 controllers throttled themselves on 1000 nodes and took ~8 minutes to make 2000
 Deployments Ready (see
 [run 07](./kube-burner-results/1000wk_cilium_haproxy/run_07_analysis.md)).
+The API servers run with `goaway-chance=0.001`. HAProxy balances TCP
+connections, so without it long-lived clients of the VIP, such as kube-burner,
+stay on whichever API server they first reached (see
+[run 10](./kube-burner-results/1000wk_cilium_haproxy/run_10_analysis.md)).
+goaway does not rebalance kubelets, which connect through the rke2-agent local
+load balancer on `127.0.0.1:6443`. That load balancer stays on one server until
+a connection to it fails (see
+[run 11](./kube-burner-results/1000wk_cilium_haproxy/run_11_analysis.md)).
+The Cilium agents avoid it: they are given two bootstrap URLs
+(`k8s.apiServerURLs`, the VIP and `127.0.0.1`), and then switch to the
+`kubernetes` Service, where Cilium's socket load balancer picks a random API
+server for every new connection.
 
 The VMs connect to `default/vm-net-2085`. The Harvester load balancer cannot
 reach backends on this isolated network, so joining servers do not use it.
@@ -229,7 +241,9 @@ IPv4-only networking (`10.44.0.0/14` pod CIDR and `10.43.0.0/16` service
 CIDR). The guest kernel must be version 5.8 or newer for Cilium kube-proxy
 replacement. The Cilium operator also tolerates the control-plane
 `CriticalAddonsOnly` taint (the agent and envoy already tolerate all taints).
-The agents serve their Prometheus metrics on port 9962 of each node
+`rke2-server-sles.sh` reads the API VIP for `k8s.apiServerURLs` from `tls-san`
+in the RKE2 config. The agents serve their Prometheus metrics on port 9962 of
+each node
 (`prometheus.enabled`), which the kube-burner runner samples on a few workers
 (see [kubelet and cilium-agent metrics](./kube-burner/README.md#kubelet-and-cilium-agent-metrics)).
 

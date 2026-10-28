@@ -153,6 +153,18 @@ apiserver_request_duration_seconds_sum{component="apiserver",resource="pods",ver
 apiserver_request_duration_seconds_sum{component="apiserver",resource="secrets",verb="LIST"} 0.25
 apiserver_request_duration_seconds_count{component="apiserver",resource="pods",verb="LIST"} 10
 apiserver_request_duration_seconds_bucket{component="apiserver",resource="pods",verb="LIST",le="1"} 10
+apiserver_request_duration_seconds_sum{component="apiserver",group="",resource="services",scope="resource",subresource="",verb="POST",version="v1"} 12.5
+apiserver_request_duration_seconds_count{component="apiserver",group="",resource="services",scope="resource",subresource="",verb="POST",version="v1"} 5
+apiserver_request_duration_seconds_count{component="apiserver",group="networking.k8s.io",resource="ipaddresses",scope="resource",subresource="",verb="POST",version="v1"} 6
+apiserver_request_terminations_total{code="504",component="apiserver",group="",resource="services",scope="resource",subresource="",verb="POST",version="v1"} 3
+apiserver_admission_step_admission_duration_seconds_sum{operation="CREATE",rejected="false",type="validate"} 0.5
+apiserver_admission_step_admission_duration_seconds_sum{operation="CREATE",rejected="true",type="validate"} 0.25
+apiserver_admission_controller_admission_duration_seconds_count{name="ResourceQuota",operation="CREATE",rejected="false",type="validate"} 8
+apiserver_admission_webhook_admission_duration_seconds_count{name="hook.example.com",operation="CREATE",rejected="false",type="admit"} 2
+kube_apiserver_clusterip_allocator_allocation_duration_seconds_sum{cidr="10.43.0.0/16"} 0.4
+kube_apiserver_clusterip_allocator_allocation_duration_seconds_count{cidr="10.43.0.0/16"} 6
+kube_apiserver_clusterip_allocator_allocation_total{cidr="10.43.0.0/16",scope="dynamic"} 6
+kube_apiserver_clusterip_allocator_allocation_errors_total{cidr="10.43.0.0/16",scope="dynamic"} 1
 apiserver_current_inflight_requests{request_kind="mutating"} 7
 apiserver_flowcontrol_rejected_requests_total{flow_schema="global-default",priority_level="global-default",reason="queue-full"} 2
 process_resident_memory_bytes 1.073741824e+09
@@ -265,6 +277,27 @@ class KubeBurnerTests(unittest.TestCase):
         self.assertEqual(samples['apiserver_request_total{verb="POST",code="429"}'], 4)
         self.assertEqual(samples['apiserver_request_duration_seconds_sum{verb="LIST"}'], 1.75)
         self.assertEqual(samples['apiserver_request_duration_seconds_count{verb="LIST"}'], 10)
+        self.assertEqual(samples['apiserver_request_duration_seconds_count{verb="POST"}'], 11)
+        self.assertEqual(
+            samples['apiserver_request_duration_seconds_sum{resource="services",verb="POST"}'], 12.5)
+        self.assertEqual(
+            samples['apiserver_request_duration_seconds_count{resource="services",verb="POST"}'], 5)
+        self.assertEqual(
+            samples['apiserver_request_duration_seconds_count{resource="ipaddresses",verb="POST"}'], 6)
+        self.assertNotIn('apiserver_request_duration_seconds_count{resource="pods",verb="LIST"}', samples)
+        self.assertEqual(samples[
+            'apiserver_request_terminations_total{verb="POST",resource="services",code="504"}'], 3)
+        self.assertEqual(samples[
+            'apiserver_admission_step_admission_duration_seconds_sum{type="validate",operation="CREATE"}'], 0.75)
+        self.assertEqual(samples[
+            'apiserver_admission_controller_admission_duration_seconds_count{name="ResourceQuota",operation="CREATE"}'], 8)
+        self.assertEqual(samples[
+            'apiserver_admission_webhook_admission_duration_seconds_count{name="hook.example.com",operation="CREATE"}'], 2)
+        self.assertEqual(samples['kube_apiserver_clusterip_allocator_allocation_duration_seconds_sum'], 0.4)
+        self.assertEqual(samples['kube_apiserver_clusterip_allocator_allocation_duration_seconds_count'], 6)
+        self.assertEqual(samples['kube_apiserver_clusterip_allocator_allocation_total{scope="dynamic"}'], 6)
+        self.assertEqual(
+            samples['kube_apiserver_clusterip_allocator_allocation_errors_total{scope="dynamic"}'], 1)
         self.assertEqual(samples['apiserver_current_inflight_requests{request_kind="mutating"}'], 7)
         self.assertEqual(samples["process_resident_memory_bytes"], 1073741824)
         self.assertEqual(samples['etcd_request_duration_seconds_count{operation="get"}'], 100)

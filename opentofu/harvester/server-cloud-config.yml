@@ -44,6 +44,13 @@ write_files:
         - "kube-api-burst=200"
         - "concurrent-deployment-syncs=20"
         - "concurrent-replicaset-syncs=20"
+      # HAProxy balances TCP connections, so long-lived HTTP/2 clients of the
+      # VIP stay on the API server they first reached. A small GOAWAY chance
+      # makes them reconnect through HAProxy over time. It does not move
+      # kubelets or Cilium: they use the rke2-agent local load balancer, which
+      # stays on one server until a connection to it fails.
+      kube-apiserver-arg:
+        - "goaway-chance=0.001"
 users:
   - name: opensuse
     lock_passwd: true

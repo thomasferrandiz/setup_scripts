@@ -144,10 +144,48 @@ locals {
                 "concurrent-deployment-syncs=20",
                 "concurrent-replicaset-syncs=20",
             ])
+            self.assertEqual(rke2["kube-apiserver-arg"], ["goaway-chance=0.001"])
             if name == "bench-cp-01":
                 self.assertNotIn("server", rke2)
             else:
                 self.assertEqual(rke2["server"], "https://192.168.64.10:9345")
+
+    def test_cilium_uses_api_server_urls_from_tls_san(self):
+        script = (MODULE / "rke2-server-sles.sh").read_text()
+        start = script.index("  api_vip=$(")
+        end = script.index("\nEOF\n", start) + len("\nEOF\n")
+        block = script[start:end].replace(
+            "/var/lib/rancher/rke2/server/manifests", '"$manifest_root"')
+        config = parse_yaml(self.rendered["servers"]["bench-cp-01"])
+        files = {item["path"]: item for item in config["write_files"]}
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            config_file = directory / "config.yaml"
+            config_file.write_text(files["/etc/rancher/rke2/config.yaml"]["content"])
+            subprocess.run(
+                ["bash", "-euo", "pipefail", "-c", block],
+                env={"config_file": str(config_file), "manifest_root": temporary,
+                     "PATH": "/usr/bin:/bin"},
+                check=True, capture_output=True, text=True,
+            )
+            manifest = parse_yaml(
+                (directory / "rke2-cilium-config.yaml").read_text())
+            empty = directory / "empty.yaml"
+            empty.write_text("cni: cilium\n")
+            failed = subprocess.run(
+                ["bash", "-euo", "pipefail", "-c", block],
+                env={"config_file": str(empty), "manifest_root": temporary,
+                     "PATH": "/usr/bin:/bin"},
+                capture_output=True, text=True,
+            )
+        values = parse_yaml(manifest["spec"]["valuesContent"])
+        self.assertEqual(values["k8sServiceHost"], "localhost")
+        self.assertEqual(values["k8sServicePort"], 6443)
+        self.assertEqual(values["k8s"]["apiServerURLs"],
+                         "https://192.168.64.253:6443 https://127.0.0.1:6443")
+        self.assertTrue(values["prometheus"]["enabled"])
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn("No tls-san API VIP", failed.stderr)
 
 
 if __name__ == "__main__":

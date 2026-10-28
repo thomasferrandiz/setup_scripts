@@ -162,6 +162,27 @@ sample_apiserver_member() {
     name ~ /^apiserver_request_duration_seconds_(sum|count)$/ {
       totals[name "{verb=\"" label(series, "verb") "\"}"] += $NF
     }
+    # Service creates also allocate a ClusterIP (an IPAddress object), so keep
+    # their latency apart. resource comes first so {verb="..." prefixes stay unique.
+    name ~ /^apiserver_request_duration_seconds_(sum|count)$/ && label(series, "resource") ~ /^(services|ipaddresses)$/ {
+      totals[name "{resource=\"" label(series, "resource") "\",verb=\"" label(series, "verb") "\"}"] += $NF
+    }
+    # Requests the API server gave up on (timeouts, self-defense).
+    name == "apiserver_request_terminations_total" {
+      totals[name "{verb=\"" label(series, "verb") "\",resource=\"" label(series, "resource") "\",code=\"" label(series, "code") "\"}"] += $NF
+    }
+    name ~ /^apiserver_admission_step_admission_duration_seconds_(sum|count)$/ {
+      totals[name "{type=\"" label(series, "type") "\",operation=\"" label(series, "operation") "\"}"] += $NF
+    }
+    name ~ /^apiserver_admission_(controller|webhook)_admission_duration_seconds_(sum|count)$/ {
+      totals[name "{name=\"" label(series, "name") "\",operation=\"" label(series, "operation") "\"}"] += $NF
+    }
+    name ~ /^kube_apiserver_clusterip_allocator_allocation_duration_seconds_(sum|count)$/ {
+      totals[name] += $NF
+    }
+    name ~ /^kube_apiserver_clusterip_allocator_allocation_(errors_)?total$/ {
+      totals[name "{scope=\"" label(series, "scope") "\"}"] += $NF
+    }
     # The API server as an etcd client: request latency, errors and stored objects.
     name ~ /^etcd_request_(duration_seconds_sum|duration_seconds_count|errors_total)$/ {
       totals[name "{operation=\"" label(series, "operation") "\"}"] += $NF

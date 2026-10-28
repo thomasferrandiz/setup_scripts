@@ -9,9 +9,14 @@ zypper --non-interactive refresh
 zypper --non-interactive install -y curl
 
 if [[ "$node_name" == "bench-cp-01" ]]; then
+  api_vip=$(awk '$1 == "tls-san:" { getline; print $2; exit }' "$config_file")
+  if [[ -z "$api_vip" ]]; then
+    echo "No tls-san API VIP in $config_file" >&2
+    exit 1
+  fi
   manifest_dir=/var/lib/rancher/rke2/server/manifests
   mkdir -p "$manifest_dir"
-  cat > "$manifest_dir/rke2-cilium-config.yaml" <<'EOF'
+  cat > "$manifest_dir/rke2-cilium-config.yaml" <<EOF
 apiVersion: helm.cattle.io/v1
 kind: HelmChartConfig
 metadata:
@@ -22,6 +27,12 @@ spec:
     kubeProxyReplacement: true
     k8sServiceHost: localhost
     k8sServicePort: 6443
+    # Bootstrap URLs only. With more than one, the agent switches to the
+    # kubernetes Service once synced, and Cilium's socket LB picks a random API
+    # server on every new connection, so GOAWAY spreads the agents. Through
+    # localhost alone they stay on one server until it fails.
+    k8s:
+      apiServerURLs: "https://${api_vip}:6443 https://127.0.0.1:6443"
     ipam:
       mode: kubernetes
     ipv4:

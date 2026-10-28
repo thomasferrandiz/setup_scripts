@@ -139,6 +139,18 @@ The runner saves a unique `results-<workload>-<timestamp>-*` directory containin
   Fairness queued/executing/rejected requests, `apiserver_request_total` summed
   by verb and code, `apiserver_request_duration_seconds_{sum,count}` summed by
   verb, and API server process CPU seconds, resident memory and goroutines.
+  To explain slow or timed-out creates it also records:
+  - `apiserver_request_duration_seconds_{sum,count}{resource,verb}` for
+    `services` and `ipaddresses` only. A Service create also allocates its
+    ClusterIP by creating an `IPAddress` object through the API server itself;
+  - `apiserver_request_terminations_total` by verb, resource and code: requests
+    the API server stopped itself, for example `504` timeouts;
+  - admission time: `apiserver_admission_step_admission_duration_seconds_{sum,count}`
+    by type (`admit`/`validate`) and operation, and
+    `apiserver_admission_{controller,webhook}_admission_duration_seconds_{sum,count}`
+    by plugin or webhook name and operation;
+  - ClusterIP allocation: `kube_apiserver_clusterip_allocator_allocation_duration_seconds_{sum,count}`,
+    and `kube_apiserver_clusterip_allocator_allocation_total` and `..._errors_total` by scope.
   It also includes the API server's view of etcd:
   `etcd_request_duration_seconds_{sum,count}` and `etcd_request_errors_total`
   summed by operation (get, list, create, update, delete...),
@@ -205,6 +217,74 @@ commit p99 below about 25 ms. Compute them from the bucket deltas between two
 samples. Rising pending proposals or leader changes indicate etcd is the
 bottleneck. Compare `etcd_request_duration_seconds` with the API server's request
 latency to tell storage time from API server CPU time.
+
+### API server connection balancing
+
+Kubelets, Cilium agents and kube-burner each keep long-lived HTTP/2 connections
+to the API servers. After an API server restarts, it gets almost no connections
+back: in run 10, bench-cp-02 had 5k goroutines against 80k on bench-cp-01, and
+bench-cp-01 reached 98 % CPU. `../server-cloud-config.yml` sets this for newly
+created servers:
+
+```yaml
+kube-apiserver-arg:
+  - "goaway-chance=0.001"
+```
+
+The API server then answers about 1 request in 1,000 with an HTTP/2 GOAWAY, and
+the client opens a new connection. For clients of the VIP, such as kube-burner
+and kubectl, the new connection goes through HAProxy `leastconn`, so their
+connections spread across the servers over a few minutes, at little cost.
+
+goaway does **not** rebalance kubelets. They connect through the rke2-agent
+local load balancer on `127.0.0.1:6443`, which stays on one server and moves only
+when a connection to it fails, so after a GOAWAY the kubelet reconnects to the
+same server. To spread kubelets, restart `rke2-agent` on the workers in batches
+after a control-plane rolling restart.
+
+Until run 11, Cilium agents used the same load balancer (`k8sServiceHost:
+localhost`). In run 11, the server restarted first (bench-cp-02) kept about 88k
+goroutines for the whole run, while bench-cp-03 had about 4k. Cilium now gets
+two bootstrap URLs in `k8s.apiServerURLs`: the VIP and `127.0.0.1:6443`. With
+more than one URL, the agent switches to the `kubernetes` Service
+(`10.43.0.1:443`) once it has synced. Cilium's socket load balancer then picks a
+random API server for every new connection, so goaway also spreads the agents.
+`k8sServiceHost: localhost` stays, for the init containers. See
+[Cilium API server high availability](https://docs.cilium.io/en/stable/network/kubernetes/kubeproxy-free/#kubernetes-api-server-high-availability).
+
+To apply it to an existing cluster, add the values to the manifest on
+bench-cp-01 (the chart has `rollOutCiliumPods: false`, so the agents must be
+restarted to read the new ConfigMap):
+
+```bash
+# On bench-cp-01, under "valuesContent: |-", at the same indentation as ipv6:
+sudo vi /var/lib/rancher/rke2/server/manifests/rke2-cilium-config.yaml
+#     k8s:
+#       apiServerURLs: "https://192.168.64.253:6443 https://127.0.0.1:6443"
+# From the jump host, once the helm-install-rke2-cilium job has completed:
+kubectl -n kube-system get configmap cilium-config \
+  -o jsonpath='{.data.k8s-api-server-urls}{"\n"}'
+kubectl -n kube-system rollout restart daemonset/cilium deployment/cilium-operator
+kubectl -n kube-system rollout status daemonset/cilium
+```
+
+Each agent then logs `updating kubernetes service mapping`, and `go_goroutines`
+per API server should even out.
+
+For existing servers, use a drop-in file, one server at a time:
+
+```bash
+# On each bench-cp-* node, waiting for the node to be Ready before the next one.
+sudo mkdir -p /etc/rancher/rke2/config.yaml.d
+sudo tee /etc/rancher/rke2/config.yaml.d/60-apiserver-goaway.yaml <<'EOF'
+kube-apiserver-arg:
+  - "goaway-chance=0.001"
+EOF
+sudo systemctl restart rke2-server
+```
+
+To compare how many connections each API server holds, look at `go_goroutines`
+by member in `apiserver-metrics.tsv`.
 
 ### kube-controller-manager metrics
 
