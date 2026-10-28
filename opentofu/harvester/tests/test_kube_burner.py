@@ -96,8 +96,9 @@ cilium_endpoint_regeneration_time_stats_seconds_sum{scope="total",status="failur
 cilium_endpoint_regeneration_time_stats_seconds_count{scope="total",status="success"} 4
 cilium_api_limiter_wait_duration_seconds{api_call="endpoint-create",value="mean"} 2.5
 cilium_api_limiter_processed_requests_total{api_call="endpoint-create",outcome="success",return_code="201"} 7
-cilium_k8s_client_api_calls_total{endpoint="/api/v1",method="PATCH",return_code="200"} 10
-cilium_k8s_client_api_calls_total{endpoint="/apis/cilium.io",method="PATCH",return_code="200"} 5
+cilium_k8s_client_api_calls_total{endpoint="/api/v1",host="10.43.0.1:443",method="PATCH",return_code="200"} 10
+cilium_k8s_client_api_calls_total{endpoint="/apis/cilium.io",host="10.43.0.1:443",method="PATCH",return_code="200"} 5
+cilium_k8s_client_api_calls_total{endpoint="/api/v1",host="192.168.64.253:6443",method="GET",return_code="200"} 4
 cilium_k8s_client_api_latency_time_seconds_sum{method="PATCH",path="/api/v1"} 0.75
 cilium_bpf_map_ops_total{map_name="x",operation="update",outcome="success"} 99
 process_cpu_seconds_total 3''')
@@ -434,7 +435,10 @@ class KubeBurnerTests(unittest.TestCase):
             f'cilium_api_limiter_wait_duration_seconds{{{m},api_call="endpoint-create",value="mean"}}'], 2.5)
         self.assertEqual(cilium[
             f'cilium_api_limiter_processed_requests_total{{{m},api_call="endpoint-create",outcome="success"}}'], 7)
-        self.assertEqual(cilium[f'cilium_k8s_client_api_calls_total{{{m},method="PATCH",return_code="200"}}'], 15)
+        self.assertEqual(cilium[
+            f'cilium_k8s_client_api_calls_total{{{m},host="10.43.0.1:443",method="PATCH",return_code="200"}}'], 15)
+        self.assertEqual(cilium[
+            f'cilium_k8s_client_api_calls_total{{{m},host="192.168.64.253:6443",method="GET",return_code="200"}}'], 4)
         self.assertEqual(cilium[f'cilium_k8s_client_api_latency_time_seconds_sum{{{m},method="PATCH"}}'], 0.75)
         self.assertEqual(cilium[f'process_cpu_seconds_total{{{m}}}'], 3)
         self.assertFalse(any(s.startswith("cilium_bpf_") for s in cilium))

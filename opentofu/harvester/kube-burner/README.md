@@ -218,6 +218,26 @@ samples. Rising pending proposals or leader changes indicate etcd is the
 bottleneck. Compare `etcd_request_duration_seconds` with the API server's request
 latency to tell storage time from API server CPU time.
 
+#### Defragmenting etcd
+
+Defragment all etcd members before each run (see
+[run 12](../kube-burner-results/1000wk_cilium_haproxy/run_12_analysis.md)), from
+the jump host:
+
+```bash
+./defrag-etcd.sh
+```
+
+The script finds the `etcd-*` static pods, asks each member whether it is the
+leader, and defragments the other members first and the leader last, one at a
+time. It runs `etcdctl` directly in the pods (the etcd image has no shell) with
+the RKE2 client certificates, and shows `endpoint status --cluster` before and
+after. After defragmentation, `DB SIZE` should be close to `IN USE` on every
+member. A member blocks reads and writes while it defragments, so run the
+script before a benchmark, and before `rebalance.sh` if a control-plane node
+also needs restarting. `DEFRAG_TIMEOUT` (default `120s`) sets the `etcdctl`
+command timeout for each member. The script stops at the first failure.
+
 ### API server connection balancing
 
 Kubelets, Cilium agents and kube-burner each keep long-lived HTTP/2 connections
@@ -240,7 +260,7 @@ goaway does **not** rebalance kubelets. They connect through the rke2-agent
 local load balancer on `127.0.0.1:6443`, which stays on one server and moves only
 when a connection to it fails, so after a GOAWAY the kubelet reconnects to the
 same server. To spread kubelets, restart `rke2-agent` on the workers in batches
-after a control-plane rolling restart.
+after a control-plane rolling restart, with `rebalance.sh` (see below).
 
 Until run 11, Cilium agents used the same load balancer (`k8sServiceHost:
 localhost`). In run 11, the server restarted first (bench-cp-02) kept about 88k
@@ -285,6 +305,117 @@ sudo systemctl restart rke2-server
 
 To compare how many connections each API server holds, look at `go_goroutines`
 by member in `apiserver-metrics.tsv`.
+
+#### Rebalancing after a control-plane restart
+
+goaway takes hours to move idle agents: in run 12, bench-cp-02 gained only
+2.4k goroutines in 25 minutes after its restart. After any control-plane
+restart, and before a benchmark, run `rebalance.sh` from the jump host. It needs
+`kubectl`, `jq` and SSH to the workers as `opensuse` (the jump host's
+`~/.ssh/config` already uses `bench.key`):
+
+```bash
+./rebalance.sh
+```
+
+It shows `go_goroutines` per API server, restarts the Cilium DaemonSet and waits
+for the rollout, then restarts `rke2-agent` on the Ready workers in parallel
+batches, waits for each batch to be Ready, and shows `go_goroutines` again. It
+stops at the first failed restart or batch that doesn't become Ready. Workers
+keep running their pods while `rke2-agent` restarts.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `CILIUM` | `yes` | Restart the Cilium agents. |
+| `AGENTS` | `yes` | Restart `rke2-agent` on the workers. |
+| `BATCH_SIZE` | `50` | Workers restarted at a time, 1 to 1000. |
+| `READY_TIMEOUT` | `300` | Seconds to wait for a batch to be Ready. |
+| `ROLLOUT_TIMEOUT` | `60m` | Timeout of the Cilium rollout. |
+| `SSH_USER` | `opensuse` | SSH user on the workers. |
+
+The restarted rke2-agent load balancer picks a pseudo-random server, so the
+kubelets spread out but not perfectly evenly. Run the script again if one
+server still has far fewer goroutines.
+
+#### API Priority and Fairness for Cilium
+
+The suggested `kube-system-service-accounts` FlowSchema puts every kube-system
+ServiceAccount into the `workload-high` priority level, with flows distinguished
+by namespace. All 1,000 Cilium agents and the operator are therefore one flow,
+limited to the 6 queues of 50 requests its hand allows. When the agents
+re-establish their watches, for example after an API server restart, many of
+them get `429` queue-full responses and retry. `../rke2-server-sles.sh` writes
+`cilium-apf.yaml` into the RKE2 manifests on bench-cp-01. It gives Cilium its
+own priority level, with about 85 of the default 600 seats per API server and
+one flow per ServiceAccount. Lease requests still match `system-leader-election`
+first (precedence 100).
+
+To apply it to an existing cluster, from the jump host:
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: flowcontrol.apiserver.k8s.io/v1
+kind: PriorityLevelConfiguration
+metadata:
+  name: cilium
+spec:
+  type: Limited
+  limited:
+    nominalConcurrencyShares: 40
+    lendablePercent: 50
+    limitResponse:
+      type: Queue
+      queuing:
+        queues: 64
+        handSize: 8
+        queueLengthLimit: 250
+---
+apiVersion: flowcontrol.apiserver.k8s.io/v1
+kind: FlowSchema
+metadata:
+  name: cilium
+spec:
+  priorityLevelConfiguration:
+    name: cilium
+  matchingPrecedence: 850
+  distinguisherMethod:
+    type: ByUser
+  rules:
+    - subjects:
+        - kind: ServiceAccount
+          serviceAccount:
+            name: cilium
+            namespace: kube-system
+        - kind: ServiceAccount
+          serviceAccount:
+            name: cilium-operator
+            namespace: kube-system
+      resourceRules:
+        - verbs: ["*"]
+          apiGroups: ["*"]
+          resources: ["*"]
+          clusterScope: true
+          namespaces: ["*"]
+      nonResourceRules:
+        - verbs: ["*"]
+          nonResourceURLs: ["*"]
+EOF
+kubectl get flowschema,prioritylevelconfiguration cilium
+```
+
+The FlowSchema should show `MissingPL` as `False`. During a run, Cilium requests
+appear under `priority_level="cilium"` in `apiserver-metrics.tsv`
+(`apiserver_flowcontrol_current_executing_requests`,
+`apiserver_flowcontrol_current_inqueue_requests` and
+`apiserver_flowcontrol_rejected_requests_total`). To roll back, delete both
+objects on the cluster and remove `cilium-apf.yaml` from the manifests
+directory on bench-cp-01 (otherwise RKE2 creates them again):
+
+```bash
+sudo rm /var/lib/rancher/rke2/server/manifests/cilium-apf.yaml
+kubectl delete flowschema cilium
+kubectl delete prioritylevelconfiguration cilium
+```
 
 ### kube-controller-manager metrics
 
@@ -449,8 +580,8 @@ Sampled cilium-agent series:
   and `cilium_api_limiter_{wait_duration_seconds,processing_duration_seconds,requests_in_flight,rate_limit,adjustment_factor}`
   by `api_call` and `value` (mean, min, max, limit...).
 - `cilium_agent_api_process_time_seconds_{sum,count}` by method and path.
-- The agent's Kubernetes client: `cilium_k8s_client_api_calls_total` by method
-  and return code, and `cilium_k8s_client_{api_latency_time,rate_limiter_duration}_seconds_{sum,count}`
+- The agent's Kubernetes client: `cilium_k8s_client_api_calls_total` by host,
+  method and return code, and `cilium_k8s_client_{api_latency_time,rate_limiter_duration}_seconds_{sum,count}`
   by method.
 - `cilium_identity` by type, `cilium_policy_regeneration_total`,
   `cilium_errors_warnings_total` by level, process CPU seconds and resident memory.
@@ -462,7 +593,10 @@ pod `Ready` latency puts the delay in the CNI. A large mean
 the agent's API rate limiter. A long endpoint regeneration time or many
 `waiting-for-identity` endpoints points to identity allocation. `429`s or a
 large rate-limiter wait in `cilium_k8s_client_*` point to the agent's
-Kubernetes client.
+Kubernetes client. The `host` label shows which address the client used: with
+`k8s.apiServerURLs`, calls should move from the bootstrap URLs
+(`192.168.64.253:6443` or `127.0.0.1:6443`) to the `kubernetes` Service
+(`10.43.0.1:443`) once the agent has synced.
 
 ```bash
 cat results-*/sampled-nodes.txt

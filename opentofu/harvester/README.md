@@ -40,7 +40,10 @@ a connection to it fails (see
 The Cilium agents avoid it: they are given two bootstrap URLs
 (`k8s.apiServerURLs`, the VIP and `127.0.0.1`), and then switch to the
 `kubernetes` Service, where Cilium's socket load balancer picks a random API
-server for every new connection.
+server for every new connection. After a control-plane restart,
+`kube-burner/rebalance.sh` restarts Cilium and the rke2-agents in batches to
+spread the connections again (see
+[rebalancing](./kube-burner/README.md#rebalancing-after-a-control-plane-restart)).
 
 The VMs connect to `default/vm-net-2085`. The Harvester load balancer cannot
 reach backends on this isolated network, so joining servers do not use it.
@@ -242,7 +245,11 @@ CIDR). The guest kernel must be version 5.8 or newer for Cilium kube-proxy
 replacement. The Cilium operator also tolerates the control-plane
 `CriticalAddonsOnly` taint (the agent and envoy already tolerate all taints).
 `rke2-server-sles.sh` reads the API VIP for `k8s.apiServerURLs` from `tls-san`
-in the RKE2 config. The agents serve their Prometheus metrics on port 9962 of
+in the RKE2 config. It also installs `cilium-apf.yaml`, an API Priority and
+Fairness FlowSchema that gives the Cilium agents and operator their own priority
+level instead of sharing one kube-system flow (see
+[API Priority and Fairness for Cilium](./kube-burner/README.md#api-priority-and-fairness-for-cilium)).
+The agents serve their Prometheus metrics on port 9962 of
 each node
 (`prometheus.enabled`), which the kube-burner runner samples on a few workers
 (see [kubelet and cilium-agent metrics](./kube-burner/README.md#kubelet-and-cilium-agent-metrics)).

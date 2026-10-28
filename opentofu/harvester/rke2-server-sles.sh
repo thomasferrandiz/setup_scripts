@@ -60,6 +60,57 @@ spec:
         - key: node.cloudprovider.kubernetes.io/uninitialized
           operator: Exists
 EOF
+  # The suggested kube-system-service-accounts FlowSchema distinguishes flows
+  # by namespace, so every kube-system agent shares one flow, limited to 6
+  # queues of 50: Cilium's watch re-establishments got 429 queue-full. Leases
+  # still match system-leader-election first (precedence 100).
+  cat > "$manifest_dir/cilium-apf.yaml" <<'EOF'
+apiVersion: flowcontrol.apiserver.k8s.io/v1
+kind: PriorityLevelConfiguration
+metadata:
+  name: cilium
+spec:
+  type: Limited
+  limited:
+    nominalConcurrencyShares: 40
+    lendablePercent: 50
+    limitResponse:
+      type: Queue
+      queuing:
+        queues: 64
+        handSize: 8
+        queueLengthLimit: 250
+---
+apiVersion: flowcontrol.apiserver.k8s.io/v1
+kind: FlowSchema
+metadata:
+  name: cilium
+spec:
+  priorityLevelConfiguration:
+    name: cilium
+  matchingPrecedence: 850
+  distinguisherMethod:
+    type: ByUser
+  rules:
+    - subjects:
+        - kind: ServiceAccount
+          serviceAccount:
+            name: cilium
+            namespace: kube-system
+        - kind: ServiceAccount
+          serviceAccount:
+            name: cilium-operator
+            namespace: kube-system
+      resourceRules:
+        - verbs: ["*"]
+          apiGroups: ["*"]
+          resources: ["*"]
+          clusterScope: true
+          namespaces: ["*"]
+      nonResourceRules:
+        - verbs: ["*"]
+          nonResourceURLs: ["*"]
+EOF
 fi
 
 if grep -q '^server:' "$config_file"; then

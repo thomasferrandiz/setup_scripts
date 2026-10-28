@@ -119,11 +119,14 @@ Node CPU (cp-01 / cp-02 / cp-03):
    - Then restart `rke2-agent` on the workers in batches for the kubelets.
    - Check that `go_goroutines` is roughly even across the API servers before starting kube-burner.
    - Restart control-plane nodes, for example for a defrag, **before** these restarts, not after.
+   - **Implemented:** `kube-burner/rebalance.sh` does all three steps from the jump host.
 2. **Record the API server host for Cilium's client calls.** Add the `host` label to `cilium_k8s_client_api_calls_total` in `run.sh`. This shows whether the agents use the Service address (`10.43.0.1:443`) or the bootstrap URLs.
+   - **Implemented:** `run.sh` keeps `host` in `cilium-metrics.tsv`.
 3. **Expect Service creates to be capped on 1.36.**
    - Spreading Service creates across all three API servers and keeping their CPU low is the only mitigation.
    - The fix (kubernetes/kubernetes#142758) arrives in v1.38. Alternatively, ask for a backport, since the PR states the performance gain.
    - Until then, the Service create latency mostly measures the allocator queue, not etcd or API server CPU.
 4. **Defragment all etcd members before each run,** not just one.
-5. **Add an APF FlowSchema and priority level for Cilium (and Traefik).** This is still pending. The `workload-high` queue still rejects their watches on the busy servers.
+5. **Add an APF FlowSchema and priority level for Cilium (and Traefik).** The `workload-high` queue still rejects their watches on the busy servers.
+   - **Implemented for Cilium:** `rke2-server-sles.sh` installs `cilium-apf.yaml` (priority level `cilium`, FlowSchema at precedence 850, flows by user). Traefik still uses `kube-system-service-accounts`.
 6. **Sample more nodes, or change the sampled set between runs,** to see how pod latency varies with the API server each node uses. 5 nodes keep the sampling cycle at about 45 s.

@@ -18,6 +18,15 @@ def parse_yaml(text):
     return json.loads(result.stdout)
 
 
+def parse_yaml_documents(text):
+    result = subprocess.run(
+        ["ruby", "-ryaml", "-rjson", "-e",
+         "puts JSON.generate(YAML.load_stream(STDIN.read))"],
+        input=text, text=True, capture_output=True, check=True,
+    )
+    return json.loads(result.stdout)
+
+
 class LoadBalancerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -153,7 +162,7 @@ locals {
     def test_cilium_uses_api_server_urls_from_tls_san(self):
         script = (MODULE / "rke2-server-sles.sh").read_text()
         start = script.index("  api_vip=$(")
-        end = script.index("\nEOF\n", start) + len("\nEOF\n")
+        end = script.index("\nfi\n", start) + 1
         block = script[start:end].replace(
             "/var/lib/rancher/rke2/server/manifests", '"$manifest_root"')
         config = parse_yaml(self.rendered["servers"]["bench-cp-01"])
@@ -170,6 +179,7 @@ locals {
             )
             manifest = parse_yaml(
                 (directory / "rke2-cilium-config.yaml").read_text())
+            apf = parse_yaml_documents((directory / "cilium-apf.yaml").read_text())
             empty = directory / "empty.yaml"
             empty.write_text("cni: cilium\n")
             failed = subprocess.run(
@@ -186,6 +196,24 @@ locals {
         self.assertTrue(values["prometheus"]["enabled"])
         self.assertNotEqual(failed.returncode, 0)
         self.assertIn("No tls-san API VIP", failed.stderr)
+        level, schema = apf
+        self.assertEqual(level["kind"], "PriorityLevelConfiguration")
+        self.assertEqual(level["metadata"]["name"], "cilium")
+        self.assertEqual(level["spec"]["limited"]["limitResponse"]["queuing"], {
+            "queues": 64, "handSize": 8, "queueLengthLimit": 250})
+        self.assertEqual(schema["kind"], "FlowSchema")
+        self.assertEqual(schema["spec"]["priorityLevelConfiguration"]["name"], "cilium")
+        # Before kube-system-service-accounts (900), after system-leader-election (100).
+        self.assertLess(schema["spec"]["matchingPrecedence"], 900)
+        self.assertGreater(schema["spec"]["matchingPrecedence"], 100)
+        self.assertEqual(schema["spec"]["distinguisherMethod"]["type"], "ByUser")
+        self.assertEqual(
+            {item["serviceAccount"]["name"] for item in schema["spec"]["rules"][0]["subjects"]},
+            {"cilium", "cilium-operator"})
+        readme = (MODULE / "kube-burner" / "README.md").read_text()
+        live = readme[readme.index("<<'EOF'\napiVersion: flowcontrol"):]
+        live = live[len("<<'EOF'\n"):live.index("\nEOF\n")]
+        self.assertEqual(parse_yaml_documents(live), apf)
 
 
 if __name__ == "__main__":
