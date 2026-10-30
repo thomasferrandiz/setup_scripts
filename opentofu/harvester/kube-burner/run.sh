@@ -374,7 +374,7 @@ sample_kubelet() {
 # cilium-agent's metrics on port 9962 through the pod proxy; the agent serves them
 # only with prometheus.enabled in the rke2-cilium chart values. Endpoint creation
 # and regeneration, the agent API rate limiter that paces CNI ADD calls, and its
-# Kubernetes client (calls by host, to tell the bootstrap URLs from the Service).
+# Kubernetes client (calls by host: the bootstrap URL the agent picked).
 cilium_rules="cilium_endpoint_regeneration_time_stats_seconds_(sum|count)=scope \
 cilium_endpoint_regenerations_total=outcome \
 cilium_endpoint_state=endpoint_state \

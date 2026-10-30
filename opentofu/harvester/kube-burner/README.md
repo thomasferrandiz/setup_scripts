@@ -593,10 +593,15 @@ pod `Ready` latency puts the delay in the CNI. A large mean
 the agent's API rate limiter. A long endpoint regeneration time or many
 `waiting-for-identity` endpoints points to identity allocation. `429`s or a
 large rate-limiter wait in `cilium_k8s_client_*` point to the agent's
-Kubernetes client. The `host` label shows which address the client used: with
-`k8s.apiServerURLs`, calls should move from the bootstrap URLs
-(`192.168.64.253:6443` or `127.0.0.1:6443`) to the `kubernetes` Service
-(`10.43.0.1:443`) once the agent has synced.
+Kubernetes client. The `host` label is the URL the agent's clientset was
+created with (client-go uses the client's base URL), so it shows which bootstrap
+URL each agent picked (`192.168.64.253:6443` or `127.0.0.1:6443`). It does
+**not** show the switch to the `kubernetes` Service: Cilium rewrites the
+destination under client-go, and the label keeps the bootstrap URL (see
+[run 13](../kube-burner-results/1000wk_cilium_haproxy/run_13_analysis.md)). To
+check where an agent's connections really go, run `sudo ss -tnp | grep
+cilium-agent` on the worker: through the Service, Cilium's socket load balancer
+connects directly to an API server's `<node IP>:6443`.
 
 ```bash
 cat results-*/sampled-nodes.txt

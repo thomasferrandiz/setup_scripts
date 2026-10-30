@@ -121,7 +121,7 @@ Node CPU (cp-01 / cp-02 / cp-03):
    - Restart control-plane nodes, for example for a defrag, **before** these restarts, not after.
    - **Implemented:** `kube-burner/rebalance.sh` does all three steps from the jump host.
 2. **Record the API server host for Cilium's client calls.** Add the `host` label to `cilium_k8s_client_api_calls_total` in `run.sh`. This shows whether the agents use the Service address (`10.43.0.1:443`) or the bootstrap URLs.
-   - **Implemented:** `run.sh` keeps `host` in `cilium-metrics.tsv`.
+   - **Implemented:** `run.sh` keeps `host` in `cilium-metrics.tsv`. Run 13 showed the label keeps the bootstrap URL even after the switch to the Service; check with `ss` on the node instead.
 3. **Expect Service creates to be capped on 1.36.**
    - Spreading Service creates across all three API servers and keeping their CPU low is the only mitigation.
    - The fix (kubernetes/kubernetes#142758) arrives in v1.38. Alternatively, ask for a backport, since the PR states the performance gain.
