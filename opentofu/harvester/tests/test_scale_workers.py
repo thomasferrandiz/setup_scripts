@@ -23,14 +23,21 @@ args = sys.argv[1:]
 if command == "tofu":
     if args == ["show", "-json"]:
         names = settings.get("names", [f"bench-wk-{i:02d}" for i in range(1, count + 1)])
-        print(json.dumps({"values": {"root_module": {"resources": [
+        servers = [
+            {"type": "harvester_virtualmachine", "name": resource, "values": {"name": name}}
+            for resource, name in settings.get("servers", [])
+        ]
+        print(json.dumps({"values": {"root_module": {"resources": servers + [
             {"type": "harvester_virtualmachine", "name": "bench_worker", "index": name}
             for name in names
         ]}}}))
     elif args[:1] == ["apply"]:
-        count = int(next(arg.split("=")[-1] for arg in args if arg.startswith("-var=")))
+        variables = dict(arg[len("-var="):].split("=", 1) for arg in args if arg.startswith("-var="))
+        count = int(variables["rke2_worker_count"])
         with (directory / "applies").open("a") as log:
             log.write(f"{count}\n")
+        with (directory / "topologies").open("a") as log:
+            log.write(variables["rke2_control_plane"] + "\n")
         if count == settings.get("fail_apply"):
             print("Mock apply failure", file=sys.stderr)
             sys.exit(1)
@@ -54,7 +61,11 @@ elif command == "ssh":
     if settings.get("ssh_failure"):
         print("Mock SSH failure", file=sys.stderr)
         sys.exit(1)
-    names = ["bench-cp-01", "bench-cp-02", "bench-cp-03"]
+    topology = (directory / "topologies").read_text().split()[-1]
+    if topology == "dedicated-etcd":
+        names = ["bench-etcd-01", "bench-etcd-02", "bench-etcd-03", "bench-cp-01", "bench-cp-02"]
+    else:
+        names = ["bench-cp-01", "bench-cp-02", "bench-cp-03"]
     names += [f"bench-wk-{i:02d}" for i in range(1, count + 1)]
     print(json.dumps({"items": [
         {"metadata": {"name": name}, "status": {"conditions": [
@@ -70,9 +81,14 @@ else:
     sys.exit(f"Unexpected command: {command}")
 """
 
+STACKED = [("bench_bootstrap", "bench-cp-01"), ("bench", "bench-cp-02"), ("bench", "bench-cp-03")]
+DEDICATED = [("bench_bootstrap", "bench-etcd-01")] + [
+    ("bench", name) for name in ("bench-etcd-02", "bench-etcd-03", "bench-cp-01", "bench-cp-02")]
+
 
 class ScaleWorkersTest(unittest.TestCase):
-    def run_scaling(self, existing, target=None, with_key=True, **settings):
+    def run_scaling(self, existing, target=None, with_key=True, control_plane=None,
+                    **settings):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             script = directory / "scale-workers.sh"
@@ -93,6 +109,9 @@ class ScaleWorkersTest(unittest.TestCase):
                 "MOCK_DIRECTORY": temporary,
                 "EXPECTED_KEY": str(key),
             }
+            environment.pop("CONTROL_PLANE", None)
+            if control_plane is not None:
+                environment["CONTROL_PLANE"] = control_plane
             args = ["bash", str(script)]
             if target is not None:
                 args.append(str(target))
@@ -104,6 +123,8 @@ class ScaleWorkersTest(unittest.TestCase):
                 path = directory / name
                 return [int(line) for line in path.read_text().splitlines()] if path.exists() else []
 
+            topologies = directory / "topologies"
+            self.topologies = topologies.read_text().split() if topologies.exists() else []
             return result, counts("applies"), counts("queries")
 
     def assert_success(self, result):
@@ -202,6 +223,61 @@ class ScaleWorkersTest(unittest.TestCase):
         self.assert_success(result)
         self.assertEqual(applies, [50, 100])
         self.assertEqual(queries, applies)
+
+    def test_fresh_cluster_defaults_to_stacked_control_plane(self):
+        result, applies, _ = self.run_scaling(0, 50)
+        self.assert_success(result)
+        self.assertIn("Control plane: stacked.", result.stdout)
+        self.assertEqual(self.topologies, ["stacked"] * len(applies))
+
+    def test_fresh_cluster_can_use_dedicated_etcd(self):
+        result, applies, queries = self.run_scaling(0, 100, control_plane="dedicated-etcd")
+        self.assert_success(result)
+        self.assertEqual(applies, [0, 50, 100])
+        self.assertEqual(queries, applies)
+        self.assertEqual(self.topologies, ["dedicated-etcd"] * 3)
+
+    def test_detects_deployed_dedicated_etcd_control_plane(self):
+        result, applies, _ = self.run_scaling(50, 100, servers=DEDICATED)
+        self.assert_success(result)
+        self.assertIn("Control plane: dedicated-etcd.", result.stdout)
+        self.assertEqual(self.topologies, ["dedicated-etcd"] * len(applies))
+
+    def test_detects_deployed_stacked_control_plane(self):
+        result, applies, _ = self.run_scaling(50, 100, servers=STACKED)
+        self.assert_success(result)
+        self.assertEqual(self.topologies, ["stacked"] * len(applies))
+
+    def test_unready_etcd_node_blocks_scaling(self):
+        result, applies, _ = self.run_scaling(50, servers=DEDICATED, not_ready="bench-etcd-02")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(applies, [50])
+
+    def test_refuses_control_plane_that_differs_from_deployed_one(self):
+        for servers, requested in ((STACKED, "dedicated-etcd"), (DEDICATED, "stacked")):
+            with self.subTest(requested=requested):
+                result, applies, _ = self.run_scaling(50, servers=servers, control_plane=requested)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("does not match the deployed", result.stderr)
+                self.assertEqual(applies, [])
+
+    def test_refuses_to_scale_during_control_plane_migration(self):
+        midway = STACKED + [("bench", "bench-etcd-01")]
+        swapped = [("bench_bootstrap", "bench-etcd-01")] + [
+            ("bench", name) for name in ("bench-etcd-02", "bench-etcd-03",
+                                         "bench-cp-01", "bench-cp-02", "bench-cp-03")]
+        for servers in (midway, swapped):
+            with self.subTest(servers=servers):
+                result, applies, _ = self.run_scaling(50, servers=servers)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("migration may be in progress", result.stderr)
+                self.assertEqual(applies, [])
+
+    def test_invalid_control_plane_does_not_apply(self):
+        result, applies, _ = self.run_scaling(50, control_plane="external")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("CONTROL_PLANE must be", result.stderr)
+        self.assertEqual(applies, [])
 
     def test_missing_or_invalid_jump_address_blocks_scaling(self):
         for jump_ip in (None, "", "not-an-ip"):

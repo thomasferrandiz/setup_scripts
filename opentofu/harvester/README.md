@@ -4,7 +4,9 @@ For workload density and API server stress testing with CPU/memory sampling,
 see the [kube-burner workloads](./kube-burner/README.md).
 
 The cloud-init configuration installs RKE2 server services on `bench-cp-01`,
-`bench-cp-02`, and `bench-cp-03`. Each Harvester VirtualMachine carries the
+`bench-cp-02`, and `bench-cp-03` (the default `stacked` control plane; see
+[control-plane topologies](#control-plane-topologies) for dedicated etcd nodes).
+Each Harvester VirtualMachine carries the
 label `node-role=control-plane` (set on the VM object, not as an RKE2/Kubernetes
 node label). `bench-cp-01` bootstraps the cluster; `bench-cp-02` and
 `bench-cp-03` join it directly at `https://<bench-cp-01 IP>:9345`. Cloud-init
@@ -47,11 +49,99 @@ spread the connections again (see
 
 The VMs connect to `default/vm-net-2085`. The Harvester load balancer cannot
 reach backends on this isolated network, so joining servers do not use it.
-All three control-plane VMs use `wait_for_lease = true`: OpenTofu waits for
+All server VMs use `wait_for_lease = true`: OpenTofu waits for
 the bootstrap DHCP address before rendering the joining servers' cloud-init,
 then waits for all server addresses before rendering the HAProxy backends.
 Use the `virtual_machines` output to obtain the VM addresses, including the
 load balancers.
+
+## Control-plane topologies
+
+`rke2_control_plane` selects the server layout:
+
+- `stacked` (default): `bench-cp-01`..`03` each run etcd and the control plane.
+- `dedicated-etcd`: `bench-etcd-01`..`03` run only etcd (`disable-apiserver`,
+  `disable-controller-manager`, `disable-scheduler`) and `bench-cp-01`..`02`
+  run only the control plane (`disable-etcd`). `bench-etcd-01` bootstraps the
+  cluster, since a control-plane-only server cannot be the first one, and
+  every other server joins at `https://<bench-etcd-01 IP>:9345`. The etcd VMs
+  carry the Harvester label `node-role=etcd`.
+
+Etcd-only servers keep `etcd-expose-metrics` and the `CriticalAddonsOnly`
+taint, but not the kube-apiserver or kube-controller-manager arguments. HAProxy
+only forwards to servers that run the API server (the `haproxy_config` output).
+`rke2-server-sles.sh` writes the Cilium HelmChartConfig and `cilium-apf.yaml`
+manifests on every API server, since etcd-only servers do not apply manifests;
+clusters created before this change only have them on `bench-cp-01`. Keep
+manual edits to these manifests identical on every API server.
+
+`rke2_server_roles` (a map of server name to `all`, `etcd` or
+`control-plane`) overrides the topology with any intermediate layout; it is
+used by the migration below and is not meant to be set by hand. The
+`rke2_servers` output records the bootstrap server and roles of the last apply.
+
+To deploy a new cluster with dedicated etcd nodes:
+
+```bash
+CONTROL_PLANE=dedicated-etcd bash ./scale-workers.sh
+```
+
+`scale-workers.sh` detects the topology of an existing cluster from the server
+VMs in state, so `CONTROL_PLANE` is only needed for a fresh deployment. It
+refuses a `CONTROL_PLANE` that differs from the deployed one, and refuses to
+run while the server VMs match neither topology (a migration in progress).
+
+### Migrating a stacked cluster to dedicated etcd
+
+[migrate-to-dedicated-etcd.sh](./migrate-to-dedicated-etcd.sh) converts a
+running stacked cluster in place. The worker VMs are not recreated and keep
+running, connected through the VIP:
+
+```bash
+cd opentofu/harvester
+bash ./migrate-to-dedicated-etcd.sh   # ASSUME_YES=yes skips the confirmation
+```
+
+It changes one server per step and waits after each one for every server to be
+Ready with its role labels, every etcd member to be started (not a learner) and
+`etcdctl endpoint health --cluster` to pass:
+
+1. to 3. Add `bench-etcd-01`, `-02` and `-03` (etcd grows from 3 to 6 members).
+4. and 5. Replace `bench-cp-03`, then `bench-cp-02`, with control-plane-only VMs.
+6. Replace `bench-cp-01`, and make `bench-etcd-01` the bootstrap server with
+   `tofu state mv` (neither VM is recreated by the move).
+7. Remove `bench-cp-03`.
+
+Etcd keeps quorum and at least two API servers stay up throughout. Before
+replacing or removing a server, the script drains it, stops RKE2 on it
+(`rke2-killall.sh`), and deletes its node, which makes RKE2 remove its etcd
+member (`etcdctl member remove` is used if it is still there after two
+minutes). Each step runs `tofu plan` with the current worker count, limited
+with `-target` to the server VMs and secrets and the load balancers' cloud-init
+secrets. The workers, load-balancer VMs and `bench-net-01` are neither refreshed
+nor changed; the provider reports drift on every VM (a `cloudinitdisk` disk
+block that is not in the configuration), which a plain apply would push to all
+of them. The script applies the saved plan only if it changes no worker and
+deletes nothing but the server being replaced; otherwise it stops. After each apply it updates
+`/etc/haproxy/haproxy.cfg` on both load balancers (validated with `haproxy
+-c`, then reloaded), since their cloud-init only runs on first boot. At the
+end, it removes `server:` from `bench-etcd-01`'s RKE2 config and points the
+other servers at `bench-etcd-01`, as their original `server:` address (the old
+`bench-cp-01`) no longer exists.
+
+The script needs `jump_host.key` like `scale-workers.sh`, `bench.key` on the
+jump host, and SSH access to both load balancers by their reported addresses.
+If a step fails, fix the cause and rerun the script: it resumes from the roles
+of the last successful apply (the `rke2_servers` output). Do not run `tofu
+apply` or `scale-workers.sh` before it has completed. Drains evict the pods
+running on the servers (only those tolerating `CriticalAddonsOnly`), and API
+clients connected to a removed server reconnect; run `kube-burner/rebalance.sh`
+afterwards to spread the connections again. The workers' rke2-agents keep
+running throughout but may take some time to update their list of servers.
+
+This version of `main.tf` no longer contains the `moved` blocks of the
+earlier `bench_bootstrap` refactoring; apply an older checkout first if the
+state predates it.
 
 ## API load balancing
 
@@ -66,8 +156,8 @@ Workers join through it at
 vm-net-2085's DHCP pool covers the whole `/19`, so the VIP must be reserved or
 excluded on its DHCP server to avoid a conflict. kube-vip is no longer deployed.
 
-[haproxy.cfg](./haproxy.cfg) forwards both ports to all three server DHCP
-addresses using TCP/TLS passthrough and `leastconn`. It balances new connections,
+[haproxy.cfg](./haproxy.cfg) forwards both ports to the DHCP addresses of
+the servers running the API server using TCP/TLS passthrough and `leastconn`. It balances new connections,
 not individual requests: HTTP/2 requests and long-lived watches can still
 produce uneven backend load. TCP health checks remove unreachable backends;
 they do not verify API readiness. Client/server inactivity timeouts are one hour,
@@ -162,7 +252,7 @@ vm-net-2085 is required.
 
 The script reads existing worker VM resources from state, reconciles up to
 the highest existing worker number (recreating any missing lower-numbered
-workers left by an interrupted batch), and waits for all three control-plane nodes and every existing
+workers left by an interrupted batch), and waits for every server node and every existing
 worker to report Kubernetes `Ready=True`. It then applies increasing worker
 counts in groups of at most 50, waiting for **all expected nodes** to be Ready
 before each next apply. From 50 workers, the counts are 100, 150, ..., 1000.
@@ -189,7 +279,8 @@ guarantee that Kubernetes nodes have finished joining.
 The rebuilt cluster uses pod CIDR `10.44.0.0/14`, defined by
 `local.rke2_cluster_cidr` in `main.tf` and passed to every server's cloud-init.
 With Kubernetes' default `/24` per-node allocation, it provides 1,024 node
-blocks, enough for 1000 workers plus three control-plane nodes (21 spare). Cilium uses
+blocks, enough for 1000 workers plus three stacked servers (21 spare) or five
+dedicated-etcd servers (19 spare; six servers at the peak of the migration). Cilium uses
 these allocations through Kubernetes IPAM. The service CIDR remains
 `10.43.0.0/16`; neither it nor vm-net-2085 overlaps the pod range.
 

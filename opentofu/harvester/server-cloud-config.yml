@@ -33,7 +33,20 @@ write_files:
         - ${rke2_api_vip}
       node-taint:
         - "CriticalAddonsOnly=true:NoExecute"
+%{ if rke2_role == "control-plane" ~}
+      # Control-plane only: the API server reaches etcd through the RKE2 etcd
+      # proxy, seeded from the server address, which must run etcd.
+      disable-etcd: true
+%{ else ~}
       etcd-expose-metrics: true
+%{ endif ~}
+%{ if rke2_role == "etcd" ~}
+      # etcd only: the kubelet reaches the API servers through the rke2-agent
+      # load balancer.
+      disable-apiserver: true
+      disable-controller-manager: true
+      disable-scheduler: true
+%{ else ~}
       # The first two let the kube-burner runner read /metrics through the API
       # server's pod proxy. The rest lift the default client limits (qps 20,
       # burst 30, 5 workers), which throttled the controllers on 1000 nodes.
@@ -51,6 +64,7 @@ write_files:
       # stays on one server until a connection to it fails.
       kube-apiserver-arg:
         - "goaway-chance=0.001"
+%{ endif ~}
 users:
   - name: opensuse
     lock_passwd: true

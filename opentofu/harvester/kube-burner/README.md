@@ -273,11 +273,11 @@ random API server for every new connection, so goaway also spreads the agents.
 [Cilium API server high availability](https://docs.cilium.io/en/stable/network/kubernetes/kubeproxy-free/#kubernetes-api-server-high-availability).
 
 To apply it to an existing cluster, add the values to the manifest on
-bench-cp-01 (the chart has `rollOutCiliumPods: false`, so the agents must be
+every API server (the chart has `rollOutCiliumPods: false`, so the agents must be
 restarted to read the new ConfigMap):
 
 ```bash
-# On bench-cp-01, under "valuesContent: |-", at the same indentation as ipv6:
+# On each API server, under "valuesContent: |-", at the same indentation as ipv6:
 sudo vi /var/lib/rancher/rke2/server/manifests/rke2-cilium-config.yaml
 #     k8s:
 #       apiServerURLs: "https://192.168.64.253:6443 https://127.0.0.1:6443"
@@ -345,7 +345,7 @@ by namespace. All 1,000 Cilium agents and the operator are therefore one flow,
 limited to the 6 queues of 50 requests its hand allows. When the agents
 re-establish their watches, for example after an API server restart, many of
 them get `429` queue-full responses and retry. `../rke2-server-sles.sh` writes
-`cilium-apf.yaml` into the RKE2 manifests on bench-cp-01. It gives Cilium its
+`cilium-apf.yaml` into the RKE2 manifests on every API server. It gives Cilium its
 own priority level, with about 85 of the default 600 seats per API server and
 one flow per ServiceAccount. Lease requests still match `system-leader-election`
 first (precedence 100).
@@ -409,7 +409,7 @@ appear under `priority_level="cilium"` in `apiserver-metrics.tsv`
 `apiserver_flowcontrol_current_inqueue_requests` and
 `apiserver_flowcontrol_rejected_requests_total`). To roll back, delete both
 objects on the cluster and remove `cilium-apf.yaml` from the manifests
-directory on bench-cp-01 (otherwise RKE2 creates them again):
+directory on every API server (otherwise RKE2 creates them again):
 
 ```bash
 sudo rm /var/lib/rancher/rke2/server/manifests/cilium-apf.yaml
@@ -526,12 +526,12 @@ and the sampling cost stays independent of cluster size.
   then shows up in `cilium-errors.log`.
 
 To enable the agent metrics on an existing cluster, add the values to the
-manifest that `../rke2-server-sles.sh` wrote on bench-cp-01. RKE2 watches that
+manifest that `../rke2-server-sles.sh` wrote on every API server. RKE2 watches that
 directory and applies the change; editing the HelmChartConfig with kubectl alone
 would be reverted from this file.
 
 ```bash
-# On bench-cp-01, under "valuesContent: |-", at the same indentation as ipv6:
+# On each API server, under "valuesContent: |-", at the same indentation as ipv6:
 sudo vi /var/lib/rancher/rke2/server/manifests/rke2-cilium-config.yaml
 #     prometheus:
 #       enabled: true

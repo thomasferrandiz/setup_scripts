@@ -51,16 +51,65 @@ variable "rke2_agent_version" {
   default     = "v1.36.5+rke2r1"
 }
 
+variable "rke2_control_plane" {
+  description = "Control-plane topology. stacked: bench-cp-01..03 run etcd and the control plane. dedicated-etcd: bench-etcd-01..03 run only etcd and bench-cp-01..02 only the control plane. Convert a running stacked cluster with migrate-to-dedicated-etcd.sh, not by changing this value."
+  type        = string
+  default     = "stacked"
+
+  validation {
+    condition     = contains(["stacked", "dedicated-etcd"], var.rke2_control_plane)
+    error_message = "rke2_control_plane must be stacked or dedicated-etcd."
+  }
+}
+
+variable "rke2_server_roles" {
+  description = "Overrides the servers derived from rke2_control_plane with node name => role (all, etcd or control-plane). Set by migrate-to-dedicated-etcd.sh for its intermediate steps; leave unset otherwise."
+  type        = map(string)
+  default     = null
+
+  validation {
+    condition = var.rke2_server_roles == null ? true : alltrue([
+      for name, role in var.rke2_server_roles :
+      can(regex("^bench-(cp|etcd)-0[1-9]$", name)) && contains(["all", "etcd", "control-plane"], role)
+    ])
+    error_message = "rke2_server_roles keys must be bench-cp-NN or bench-etcd-NN and roles all, etcd or control-plane."
+  }
+}
+
 locals {
-  rke2_cluster_cidr   = "10.44.0.0/14"
-  rke2_bootstrap_node = "bench-cp-01"
+  rke2_cluster_cidr = "10.44.0.0/14"
+  rke2_topologies = {
+    stacked = {
+      "bench-cp-01" = "all"
+      "bench-cp-02" = "all"
+      "bench-cp-03" = "all"
+    }
+    dedicated-etcd = {
+      "bench-etcd-01" = "etcd"
+      "bench-etcd-02" = "etcd"
+      "bench-etcd-03" = "etcd"
+      "bench-cp-01"   = "control-plane"
+      "bench-cp-02"   = "control-plane"
+    }
+  }
+  rke2_server_roles = var.rke2_server_roles != null ? var.rke2_server_roles : local.rke2_topologies[var.rke2_control_plane]
+  # The first server must run etcd: bench-cp-01 while it still does, otherwise bench-etcd-01.
+  rke2_bootstrap_node = lookup(local.rke2_server_roles, "bench-cp-01", "") == "all" ? "bench-cp-01" : "bench-etcd-01"
+  rke2_joining_nodes  = { for name, role in local.rke2_server_roles : name => role if name != local.rke2_bootstrap_node }
   rke2_worker_nodes   = toset([for i in range(1, var.rke2_worker_count + 1) : format("bench-wk-%02d", i)])
-  rke2_joining_nodes  = toset(["bench-cp-02", "bench-cp-03"])
   rke2_lb_nodes       = { "bench-lb-01" = 150, "bench-lb-02" = 100 }
   rke2_server_ips = merge(
     { (local.rke2_bootstrap_node) = local.rke2_bootstrap_ip },
     { for name, vm in harvester_virtualmachine.bench : name => vm.network_interface[0].ip_address }
   )
+  # HAProxy only forwards to servers running the API server; etcd-only nodes have none.
+  rke2_apiserver_ips = {
+    for name, ip in local.rke2_server_ips : name => ip
+    if local.rke2_server_roles[name] != "etcd"
+  }
+  haproxy_config = templatefile("${path.module}/haproxy.cfg", {
+    servers = local.rke2_apiserver_ips
+  })
 
   # Direct registration avoids a dependency cycle: HAProxy needs all server leases.
   rke2_bootstrap_ip = harvester_virtualmachine.bench_bootstrap.network_interface[0].ip_address
@@ -75,23 +124,25 @@ locals {
   }
 }
 
-moved {
-  from = harvester_cloudinit_secret.bench["bench-cp-01"]
-  to   = harvester_cloudinit_secret.bench_bootstrap
-}
-
-moved {
-  from = harvester_virtualmachine.bench["bench-cp-01"]
-  to   = harvester_virtualmachine.bench_bootstrap
-}
-
 resource "harvester_cloudinit_secret" "bench_bootstrap" {
   name      = "${local.rke2_bootstrap_node}-cloudinit"
   namespace = "default"
   user_data = sensitive(templatefile("${path.module}/server-cloud-config.yml", merge(local.rke2_cloud_config_vars, {
     node_name      = local.rke2_bootstrap_node
     server_address = ""
+    rke2_role      = local.rke2_server_roles[local.rke2_bootstrap_node]
   })))
+
+  lifecycle {
+    precondition {
+      condition     = contains(["all", "etcd"], lookup(local.rke2_server_roles, local.rke2_bootstrap_node, ""))
+      error_message = "The servers must include ${local.rke2_bootstrap_node} with an etcd role: the first server must run etcd."
+    }
+    precondition {
+      condition     = anytrue([for role in values(local.rke2_server_roles) : role != "etcd"])
+      error_message = "At least one server must run the control plane (role all or control-plane)."
+    }
+  }
 }
 
 resource "harvester_cloudinit_secret" "bench" {
@@ -102,6 +153,7 @@ resource "harvester_cloudinit_secret" "bench" {
   user_data = sensitive(templatefile("${path.module}/server-cloud-config.yml", merge(local.rke2_cloud_config_vars, {
     node_name      = each.key
     server_address = local.rke2_bootstrap_ip
+    rke2_role      = each.value
   })))
 
   lifecycle {
@@ -116,7 +168,7 @@ resource "harvester_virtualmachine" "bench_bootstrap" {
   name      = local.rke2_bootstrap_node
   namespace = "default"
   labels = {
-    "node-role" = "control-plane"
+    "node-role" = local.rke2_server_roles[local.rke2_bootstrap_node] == "etcd" ? "etcd" : "control-plane"
   }
   cpu          = 8
   memory       = "16Gi"
@@ -174,7 +226,7 @@ resource "harvester_virtualmachine" "bench" {
   name      = each.key
   namespace = "default"
   labels = {
-    "node-role" = "control-plane"
+    "node-role" = each.value == "etcd" ? "etcd" : "control-plane"
   }
   cpu          = 8
   memory       = "16Gi"
@@ -235,9 +287,7 @@ resource "harvester_cloudinit_secret" "bench_lb" {
     node_name            = each.key
     bench_public_key     = trimspace(file("${path.module}/bench.key.pub"))
     harvester_public_key = data.harvester_ssh_key.bench_dual_network.public_key
-    haproxy_config = templatefile("${path.module}/haproxy.cfg", {
-      servers = local.rke2_server_ips
-    })
+    haproxy_config       = local.haproxy_config
     keepalived_config = templatefile("${path.module}/keepalived.conf", {
       rke2_api_vip = var.rke2_api_vip
       priority     = each.value
@@ -246,7 +296,7 @@ resource "harvester_cloudinit_secret" "bench_lb" {
 
   lifecycle {
     precondition {
-      condition     = alltrue([for ip in values(local.rke2_server_ips) : ip != null && ip != ""])
+      condition     = alltrue([for ip in values(local.rke2_apiserver_ips) : ip != null && ip != ""])
       error_message = "All control-plane VMs must have DHCP addresses before rendering HAProxy backends."
     }
   }
@@ -565,4 +615,19 @@ output "virtual_machines" {
       }
     }
   )
+}
+
+output "rke2_servers" {
+  description = "RKE2 server roles (all, etcd or control-plane) by node name, and the bootstrap server. migrate-to-dedicated-etcd.sh resumes from these roles."
+  # Not updated when creating a server fails.
+  depends_on = [harvester_virtualmachine.bench_bootstrap, harvester_virtualmachine.bench]
+  value = {
+    bootstrap = local.rke2_bootstrap_node
+    roles     = local.rke2_server_roles
+  }
+}
+
+output "haproxy_config" {
+  description = "HAProxy configuration for the current API servers. Cloud-init only applies it on first boot; migrate-to-dedicated-etcd.sh pushes it to running load balancers."
+  value       = local.haproxy_config
 }

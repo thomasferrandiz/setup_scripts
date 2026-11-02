@@ -59,10 +59,14 @@ locals {
       keepalived_config = local.keepalived[tostring(priority)]
     })
   }
-  servers = { for name, address in {
-    bench-cp-01 = "", bench-cp-02 = "192.168.64.10"
+  servers = { for name, server in {
+    bench-cp-01   = { address = "", role = "all" }
+    bench-cp-02   = { address = "192.168.64.10", role = "all" }
+    bench-etcd-01 = { address = "192.168.64.10", role = "etcd" }
+    bench-cp-03   = { address = "192.168.64.10", role = "control-plane" }
   } : name => templatefile("${path.module}/server-cloud-config.yml", {
-    node_name = name, server_address = address, rke2_token = "test-token"
+    node_name = name, server_address = server.address, rke2_role = server.role
+    rke2_token = "test-token"
     bench_public_key = "ssh-ed25519 test-bench"
     harvester_public_key = "ssh-ed25519 test-harvester"
     rke2_server_script = "#!/bin/bash\\necho test\\n"
@@ -134,8 +138,8 @@ locals {
                           files["/etc/systemd/system/haproxy.service.d/limits.conf"]["content"])
 
     def test_server_cloud_init_preserves_bootstrap_and_cluster_settings(self):
-        for name, text in self.rendered["servers"].items():
-            config = parse_yaml(text)
+        for name in ("bench-cp-01", "bench-cp-02"):
+            config = parse_yaml(self.rendered["servers"][name])
             self.assertEqual(config["hostname"], name)
             self.assertIn("iptables", config["packages"])
             files = {item["path"]: item for item in config["write_files"]}
@@ -154,10 +158,61 @@ locals {
                 "concurrent-replicaset-syncs=20",
             ])
             self.assertEqual(rke2["kube-apiserver-arg"], ["goaway-chance=0.001"])
+            self.assertFalse(any(key in rke2 for key in (
+                "disable-etcd", "disable-apiserver",
+                "disable-controller-manager", "disable-scheduler")))
             if name == "bench-cp-01":
                 self.assertNotIn("server", rke2)
             else:
                 self.assertEqual(rke2["server"], "https://192.168.64.10:9345")
+
+    def server_rke2_config(self, name):
+        config = parse_yaml(self.rendered["servers"][name])
+        files = {item["path"]: item for item in config["write_files"]}
+        return parse_yaml(files["/etc/rancher/rke2/config.yaml"]["content"])
+
+    def test_etcd_only_server_disables_control_plane_components(self):
+        rke2 = self.server_rke2_config("bench-etcd-01")
+        self.assertTrue(rke2["disable-apiserver"])
+        self.assertTrue(rke2["disable-controller-manager"])
+        self.assertTrue(rke2["disable-scheduler"])
+        self.assertNotIn("disable-etcd", rke2)
+        self.assertTrue(rke2["etcd-expose-metrics"])
+        self.assertNotIn("kube-controller-manager-arg", rke2)
+        self.assertNotIn("kube-apiserver-arg", rke2)
+        self.assertEqual(rke2["node-taint"], ["CriticalAddonsOnly=true:NoExecute"])
+        self.assertEqual(rke2["server"], "https://192.168.64.10:9345")
+
+    def test_control_plane_only_server_disables_etcd(self):
+        rke2 = self.server_rke2_config("bench-cp-03")
+        self.assertTrue(rke2["disable-etcd"])
+        self.assertNotIn("etcd-expose-metrics", rke2)
+        self.assertFalse(any(key in rke2 for key in (
+            "disable-apiserver", "disable-controller-manager", "disable-scheduler")))
+        self.assertIn("concurrent-deployment-syncs=20", rke2["kube-controller-manager-arg"])
+        self.assertEqual(rke2["kube-apiserver-arg"], ["goaway-chance=0.001"])
+        self.assertEqual(rke2["server"], "https://192.168.64.10:9345")
+
+    def test_api_manifests_are_skipped_on_etcd_only_servers(self):
+        script = (MODULE / "rke2-server-sles.sh").read_text()
+        start = script.index("if ! grep -q '^disable-apiserver")
+        end = script.index("\nfi\n", start) + 4
+        block = script[start:end].replace(
+            "/var/lib/rancher/rke2/server/manifests", '"$manifest_root"')
+        for name, written in (("bench-etcd-01", False), ("bench-cp-03", True)):
+            config = parse_yaml(self.rendered["servers"][name])
+            files = {item["path"]: item for item in config["write_files"]}
+            with tempfile.TemporaryDirectory() as temporary:
+                config_file = Path(temporary) / "config.yaml"
+                config_file.write_text(files["/etc/rancher/rke2/config.yaml"]["content"])
+                subprocess.run(
+                    ["bash", "-euo", "pipefail", "-c", block],
+                    env={"config_file": str(config_file), "manifest_root": temporary,
+                         "PATH": "/usr/bin:/bin"},
+                    check=True, capture_output=True, text=True,
+                )
+                self.assertEqual(
+                    (Path(temporary) / "rke2-cilium-config.yaml").exists(), written, name)
 
     def test_cilium_uses_api_server_urls_from_tls_san(self):
         script = (MODULE / "rke2-server-sles.sh").read_text()

@@ -403,7 +403,8 @@ sample_cilium() {
 # Evenly spaced workers in natural name order, so bench-wk-1000 sorts last.
 sampled_nodes=$(jq -r --argjson count "$node_sample_count" '
   [.items[]
-    | select((.metadata.labels // {}) | has("node-role.kubernetes.io/control-plane") | not)
+    | select((.metadata.labels // {})
+      | (has("node-role.kubernetes.io/control-plane") or has("node-role.kubernetes.io/etcd")) | not)
     | .metadata.name]
   | sort_by([sub("[0-9]+$"; ""), ((capture("(?<n>[0-9]+)$").n // "0") | tonumber)])
   | . as $workers

@@ -2,13 +2,13 @@
 set -euo pipefail
 
 config_file=/etc/rancher/rke2/config.yaml
-node_name=$(awk '$1 == "node-name:" { print $2 }' "$config_file")
-node_name=${node_name:-$(hostname)}
 
 zypper --non-interactive refresh
 zypper --non-interactive install -y curl
 
-if [[ "$node_name" == "bench-cp-01" ]]; then
+# Every API server node deploys the same manifests, so they apply whichever
+# joins first; etcd-only nodes run no deploy controller.
+if ! grep -q '^disable-apiserver: *true' "$config_file"; then
   api_vip=$(awk '$1 == "tls-san:" { getline; print $2; exit }' "$config_file")
   if [[ -z "$api_vip" ]]; then
     echo "No tls-san API VIP in $config_file" >&2

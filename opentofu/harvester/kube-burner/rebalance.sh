@@ -34,16 +34,20 @@ for command in kubectl jq ssh; do
 done
 
 nodes=$(kubectl --request-timeout=30s get nodes -o json)
-# name, IPv4 InternalIP and Ready status, control plane first.
+# name, role, IPv4 InternalIP and Ready status, servers first. Dedicated etcd
+# nodes have no API server and run rke2-server, not rke2-agent.
 node_table=$(jq -r '
   .items[]
+  | ((.metadata.labels // {})) as $labels
   | [.metadata.name,
-     ((.metadata.labels // {}) | has("node-role.kubernetes.io/control-plane")),
+     (if $labels | has("node-role.kubernetes.io/control-plane") then "control-plane"
+      elif $labels | has("node-role.kubernetes.io/etcd") then "etcd"
+      else "worker" end),
      ([.status.addresses[]? | select(.type == "InternalIP" and (.address | contains(":") | not)) | .address] | first // "-"),
      any(.status.conditions[]?; .type == "Ready" and .status == "True")]
   | @tsv
 ' <<< "$nodes" | sort)
-servers=$(awk -F'\t' '$2 == "true" && $3 != "-" { print $1 "\thttps://" $3 ":6443" }' <<< "$node_table")
+servers=$(awk -F'\t' '$2 == "control-plane" && $3 != "-" { print $1 "\thttps://" $3 ":6443" }' <<< "$node_table")
 if [[ -z "$servers" ]]; then
   echo "No control-plane node with an IPv4 InternalIP found." >&2
   exit 1
@@ -74,8 +78,8 @@ fi
 
 if [[ "$agents" == yes ]]; then
   workers=()
-  while IFS=$'\t' read -r name control_plane ip ready; do
-    if [[ "$control_plane" == true ]]; then
+  while IFS=$'\t' read -r name role ip ready; do
+    if [[ "$role" != worker ]]; then
       continue
     elif [[ "$ready" != true || "$ip" == - ]]; then
       echo "Skipping ${name}: not Ready or no IPv4 InternalIP." >&2
