@@ -33,6 +33,10 @@ DEDICATED = {"bench-cp-01": "control-plane", "bench-cp-02": "control-plane",
              "bench-etcd-01": "etcd", "bench-etcd-02": "etcd", "bench-etcd-03": "etcd"}
 
 
+VIP = "192.168.64.253"
+LBS = {"bench-lb-01": "192.168.66.55", "bench-lb-02": "192.168.66.21"}
+
+
 def save():
     sim_file.write_text(json.dumps(sim, indent=1))
 
@@ -211,8 +215,10 @@ def tofu():
     elif args == ["output", "-json", "virtual_machines"]:
         vms = {n: {"ip_address": h["ip"]} for n, h in sim["hosts"].items()}
         vms.update({"bench-net-01": {"ip_address": "192.168.1.20"},
-                    "bench-lb-01": {"ip_address": "192.168.64.2"},
-                    "bench-lb-02": {"ip_address": "192.168.64.3"}})
+                    # As on Harvester: the active load balancer reports the VIP, and
+                    # the other one no address, as they do not wait for a lease.
+                    "bench-lb-01": {"ip_address": VIP},
+                    "bench-lb-02": {"ip_address": ""}})
         print(json.dumps(vms))
     elif args == ["output", "-json", "rke2_servers"]:
         if "rke2_servers" not in sim["outputs"]:
@@ -303,12 +309,15 @@ def ssh():
     outer = shlex.split(args[-1])
     ip = next(a for a in outer if a.startswith("opensuse@")).removeprefix("opensuse@")
     argv = shlex.split(outer[-1])
-    if ip in ("192.168.64.2", "192.168.64.3"):
-        lb = "bench-lb-01" if ip.endswith(".2") else "bench-lb-02"
+    if ip in LBS.values() or ip == VIP:
+        lb = next((n for n, a in LBS.items() if a == ip), "bench-lb-01")
+        if settings.get("lb_unreachable"):
+            fail(f"ssh: connect to host {ip}: Connection timed out")
         if argv == ["hostname"]:
             print(lb)
         elif argv[:3] == ["sudo", "-n", "sh"] and "haproxy -c" in argv[-1]:
             sim["haproxy"][lb] = sys.stdin.read()
+            log(f"push {lb}")
         else:
             fail(f"Unexpected load balancer command: {argv}")
         return
@@ -335,6 +344,16 @@ def ssh():
 
 if command == "tofu":
     tofu()
+elif command == "kubectl":
+    if args[:6] != ["--kubeconfig", "local.yaml", "--request-timeout=20s", "-n", "default", "get"] \
+            or args[6] != "vmi" or args[8:] != ["-o", "json"] or args[7] not in LBS:
+        fail(f"Unexpected Harvester kubectl arguments: {args}")
+    addresses = [LBS[args[7]]] + ([VIP] if args[7] == "bench-lb-01" else []) + ["fe80::1"]
+    # The guest agent of bench-lb-02 stops reporting its address at times.
+    if args[7] == "bench-lb-02" and sim["applies"] >= settings.get("lb02_unreported_from_apply", 99):
+        addresses = None
+    print(json.dumps({"status": {"interfaces": [
+        {"name": "default", "ipAddress": addresses and addresses[0], "ipAddresses": addresses}]}}))
 elif command == "ssh":
     ssh()
 elif command == "sleep":
@@ -386,7 +405,8 @@ class MigrateToDedicatedEtcdTest(unittest.TestCase):
         self.key = self.directory / "jump_host.key"
         self.key.write_text("dummy key\n")
         self.key.chmod(0o600)
-        for command in ("tofu", "ssh", "sleep"):
+        (self.directory / "local.yaml").write_text("apiVersion: v1\n")
+        for command in ("tofu", "ssh", "sleep", "kubectl"):
             executable = self.directory / command
             executable.write_text(MOCK)
             executable.chmod(0o755)
@@ -401,7 +421,7 @@ class MigrateToDedicatedEtcdTest(unittest.TestCase):
     def write(self, sim):
         (self.directory / "sim.json").write_text(json.dumps(sim))
 
-    def run_migration(self, **settings):
+    def run_migration(self, environment=None, **settings):
         sim = self.sim
         sim["settings"] = settings
         sim["sleeps"] = 0
@@ -412,6 +432,7 @@ class MigrateToDedicatedEtcdTest(unittest.TestCase):
             "MOCK_DIRECTORY": str(self.directory),
             "EXPECTED_KEY": str(self.key),
             "ASSUME_YES": "yes",
+            **(environment or {}),
         }
         return subprocess.run(["bash", str(self.directory / SCRIPT.name)], env=environment,
                               capture_output=True, text=True, timeout=120)
@@ -444,7 +465,8 @@ class MigrateToDedicatedEtcdTest(unittest.TestCase):
         self.assert_migrated(result)
         sim = self.sim
         self.assertEqual(sim["applies"], 7)
-        changes = [line for line in sim["log"] if not line.startswith("drain")]
+        changes = [line for line in sim["log"]
+                   if not line.startswith("drain") and not line.startswith("push")]
         self.assertEqual(changes, [
             "create bench-etcd-01 etcd",
             "create bench-etcd-02 etcd",
@@ -474,6 +496,40 @@ class MigrateToDedicatedEtcdTest(unittest.TestCase):
         result = self.run_migration()
         self.assert_migrated(result)
         self.assertEqual(self.sim["log"].count("stop bench-cp-01"), 1)
+
+    def test_resume_updates_haproxy_skipped_by_failed_run(self):
+        self.write(stacked_simulation())
+        result = self.run_migration(lb_unreachable=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Could not reach bench-lb-01", result.stderr)
+        self.assertEqual(self.sim["applies"], 1)
+        result = self.run_migration()
+        self.assert_migrated(result)
+        log = self.sim["log"]
+        self.assertLess(log.index("push bench-lb-02"), log.index("create bench-etcd-02 etcd"))
+
+    def test_remembers_load_balancer_address_harvester_stops_reporting(self):
+        self.write(stacked_simulation())
+        result = self.run_migration(lb02_unreported_from_apply=3)
+        self.assert_migrated(result)
+        self.assertIn("bench-lb-02 192.168.66.21", (self.directory / ".lb-addresses").read_text())
+
+    def test_load_balancer_address_can_be_given(self):
+        self.write(stacked_simulation())
+        (self.directory / "local.yaml").unlink()
+        result = self.run_migration({"LB_ADDRESSES": "bench-lb-02=192.168.66.21"})
+        self.assert_migrated(result)
+
+    def test_load_balancer_without_harvester_address_is_not_skipped(self):
+        self.write(stacked_simulation())
+        (self.directory / "local.yaml").unlink()
+        result = self.run_migration()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Could not reach bench-lb-02 (tried: no address reported)",
+                      result.stderr)
+        self.assertIn("LB_ADDRESSES=bench-lb-02=<address>", result.stderr)
+        self.assertEqual(self.sim["haproxy"], {"bench-lb-01": "".join(
+            f"server bench-cp-0{i} 192.168.64.{9 + i}:6443 check\n" for i in (1, 2, 3))})
 
     def test_falls_back_to_removing_etcd_member_directly(self):
         self.write(stacked_simulation())

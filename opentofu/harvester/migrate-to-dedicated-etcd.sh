@@ -30,6 +30,8 @@ fi
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 plan_file="$work/migration.tfplan"
+# Addresses that reached each load balancer, as Harvester does not always report them.
+lb_cache="$PWD/.lb-addresses"
 
 ssh_options=(-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5
   -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new)
@@ -300,23 +302,61 @@ apply_step() {
   load_addresses
 }
 
+# Prints the candidate addresses of a load balancer: one given in LB_ADDRESSES,
+# the last one that reached it, then those Harvester and OpenTofu report.
+# OpenTofu state may have none (the load balancers do not wait for a DHCP
+# lease) or the Keepalived VIP, and the guest agent does not always report one.
+lb_addresses() {
+  local lb=$1 entry
+  for entry in ${LB_ADDRESSES//,/ }; do
+    if [[ "${entry%%=*}" == "$lb" ]]; then
+      echo "${entry#*=}"
+    fi
+  done
+  if [[ -r "$lb_cache" ]]; then
+    awk -v lb="$lb" '$1 == lb { print $2 }' "$lb_cache"
+  fi
+  if command -v kubectl >/dev/null && [[ -r local.yaml ]]; then
+    kubectl --kubeconfig local.yaml --request-timeout=20s -n default get vmi "$lb" -o json 2>/dev/null \
+      | jq -r '.status.interfaces[]? | select(.name == "default") | (.ipAddress, .ipAddresses[]?)
+          | strings' || true
+  fi
+  vm_ip "$lb" || true
+}
+
+# Prints an address that reaches load balancer $1, checked with its hostname.
+find_lb() {
+  local lb=$1 attempt ip host tried
+  for ((attempt = 1; attempt <= 6; attempt++)); do
+    tried=
+    while read -r ip; do
+      if [[ ! "$ip" =~ $ipv4 ]]; then
+        continue
+      fi
+      # The VIP reaches the active load balancer, whichever it is.
+      if host=$(remote "$ip" hostname 2> "$work/ssh.err") && [[ "${host%%.*}" == "$lb" ]]; then
+        { grep -v "^${lb} " "$lb_cache" 2>/dev/null || true; echo "$lb $ip"; } > "$lb_cache.new"
+        mv "$lb_cache.new" "$lb_cache"
+        echo "$ip"
+        return
+      fi
+      tried+=" ${ip} ($( { echo "${host:+reaches ${host}}"; cat "$work/ssh.err"; } | grep -v '^\*\*' | grep . | tail -n 1))"
+    done < <(lb_addresses "$lb" | awk '!seen[$0]++')
+    echo "Could not reach ${lb} (tried:${tried:- no address reported}); retrying in 20 seconds." >&2
+    sleep 20
+  done
+  echo "Could not reach ${lb}. Set LB_ADDRESSES=${lb}=<address> and rerun, or update /etc/haproxy/haproxy.cfg from 'tofu output -raw haproxy_config' by hand." >&2
+  return 1
+}
+
 # Cloud-init only configured HAProxy on first boot.
 push_haproxy() {
-  local config lb ip host
+  local config lb found
   config=$(tofu output -raw haproxy_config)
   for lb in bench-lb-01 bench-lb-02; do
-    if ! ip=$(vm_ip "$lb"); then
-      echo "No valid IP found in OpenTofu output for ${lb}; update /etc/haproxy/haproxy.cfg from 'tofu output -raw haproxy_config' by hand." >&2
-      return 1
-    fi
-    # The provider may report the Keepalived VIP, which reaches the active load balancer.
-    host=$(remote "$ip" hostname)
-    if [[ "${host%%.*}" != "$lb" ]]; then
-      echo "${ip}, the address of ${lb}, reaches ${host}; update /etc/haproxy/haproxy.cfg from 'tofu output -raw haproxy_config' by hand." >&2
-      return 1
-    fi
+    found=$(find_lb "$lb") || return 1
     # shellcheck disable=SC2016 # Expanded by the remote shell.
-    remote_input "$ip" sudo -n sh -ec '
+    remote_input "$found" sudo -n sh -ec '
       cat > /etc/haproxy/haproxy.cfg.new
       haproxy -c -q -f /etc/haproxy/haproxy.cfg.new
       if cmp -s /etc/haproxy/haproxy.cfg.new /etc/haproxy/haproxy.cfg; then
@@ -385,6 +425,10 @@ if (( current < 7 )); then
     if [[ ! "$answer" =~ ^[yY]$ ]]; then
       exit 1
     fi
+  fi
+  # A previous run may have stopped after an apply, before updating HAProxy.
+  if (( current > 0 )); then
+    push_haproxy
   fi
   # A previous run may have removed the next step's server before failing.
   wait_for_roles "${steps[current]}" "${targets[current + 1]}"

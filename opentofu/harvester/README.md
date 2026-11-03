@@ -129,9 +129,15 @@ end, it removes `server:` from `bench-etcd-01`'s RKE2 config and points the
 other servers at `bench-etcd-01`, as their original `server:` address (the old
 `bench-cp-01`) no longer exists.
 
-The script needs `jump_host.key` like `scale-workers.sh`, `bench.key` on the
-jump host, and SSH access to both load balancers by their reported addresses.
-If a step fails, fix the cause and rerun the script: it resumes from the roles
+The script needs `jump_host.key` like `scale-workers.sh` and `bench.key` on the
+jump host. It finds the load balancers' addresses with `kubectl` and
+`local.yaml` (the Harvester kubeconfig of the provider), since OpenTofu state
+may have none or the VIP for them, and checks each one's `hostname` before
+updating it. The guest agent does not always report an address, so the last
+address that reached each load balancer is kept in `.lb-addresses`
+(gitignored), and `LB_ADDRESSES=bench-lb-02=<address>` (comma-separated)
+supplies one by hand. If a step fails, fix the cause and rerun the script: it updates
+HAProxy again, then resumes from the roles
 of the last successful apply (the `rke2_servers` output). Do not run `tofu
 apply` or `scale-workers.sh` before it has completed. Drains evict the pods
 running on the servers (only those tolerating `CriticalAddonsOnly`), and API
