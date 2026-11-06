@@ -8,8 +8,9 @@ import unittest
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "migrate-to-dedicated-etcd.sh"
+LIBRARY = SCRIPT.with_name("control-plane-lib.sh")
 DEDICATED = {"bench-cp-01": "control-plane", "bench-cp-02": "control-plane",
-             "bench-etcd-01": "etcd", "bench-etcd-02": "etcd", "bench-etcd-03": "etcd"}
+             "bench-cp-03": "control-plane", "bench-etcd-01": "etcd", "bench-etcd-02": "etcd", "bench-etcd-03": "etcd"}
 
 # Simulates OpenTofu state and plans, the server VMs, Kubernetes nodes and etcd
 # members. Every disruptive action checks that etcd keeps quorum, that two API
@@ -30,7 +31,7 @@ command = Path(sys.argv[0]).name
 args = sys.argv[1:]
 TYPES = ("harvester_virtualmachine", "harvester_cloudinit_secret")
 DEDICATED = {"bench-cp-01": "control-plane", "bench-cp-02": "control-plane",
-             "bench-etcd-01": "etcd", "bench-etcd-02": "etcd", "bench-etcd-03": "etcd"}
+             "bench-cp-03": "control-plane", "bench-etcd-01": "etcd", "bench-etcd-02": "etcd", "bench-etcd-03": "etcd"}
 
 
 VIP = "192.168.64.253"
@@ -61,12 +62,17 @@ def check_invariants(context):
         sim["violations"].append(f"{context}: only {apis} serve the API")
 
 
-def address(type_, name, bootstrap):
-    return f"{type_}.bench_bootstrap" if name == bootstrap else f'{type_}.bench["{name}"]'
+def resource_name(name, bootstrap, role):
+    return "bench_bootstrap" if name == bootstrap else "bench_etcd" if role == "etcd" else "bench"
+
+
+def address(type_, name, bootstrap, role):
+    resource = resource_name(name, bootstrap, role)
+    return f"{type_}.{resource}" if resource == "bench_bootstrap" else f'{type_}.{resource}["{name}"]'
 
 
 def server_resources():
-    return [r for r in sim["resources"] if r["type"] in TYPES and r["name"] in ("bench", "bench_bootstrap")]
+    return [r for r in sim["resources"] if r["type"] in TYPES and r["name"] in ("bench", "bench_etcd", "bench_bootstrap")]
 
 
 def vm_name(resource):
@@ -100,6 +106,14 @@ def new_host(name, role, server):
                                "name": f"{name}-{sim['next_member'] % 0xffff:04x}"})
 
 
+def rke2_config(host):
+    if "config" in sim["hosts"][host]:
+        return sim["hosts"][host]["config"]
+    if sim["hosts"][host]["role"] == "control-plane":
+        return 'disable-etcd: true\nkube-apiserver-arg:\n  - "goaway-chance=0.001"\n'
+    return "etcd-expose-metrics: true\n"
+
+
 def plan(args):
     variables = dict(a[len("-var="):].split("=", 1) for a in args if a.startswith("-var="))
     replace = [a[len("-replace="):] for a in args if a.startswith("-replace=")]
@@ -113,14 +127,14 @@ def plan(args):
         roles = DEDICATED
     bootstrap = "bench-cp-01" if roles.get("bench-cp-01") == "all" else "bench-etcd-01"
     current = {r["address"]: r for r in server_resources()}
-    desired = {address(t, n, bootstrap): (t, n) for n in roles for t in TYPES}
+    desired = {address(t, n, bootstrap, roles[n]): (t, n) for n in roles for t in TYPES}
     changes = []
     for addr, r in current.items():
         if addr not in desired or desired[addr][1] != vm_name(r):
             changes.append({"address": addr, "actions": ["delete"], "type": r["type"],
                             "name": r["name"], "before": vm_name(r)})
     for addr, (type_, name) in desired.items():
-        resource = "bench_bootstrap" if name == bootstrap else "bench"
+        resource = resource_name(name, bootstrap, roles[name])
         if addr not in current:
             changes.append({"address": addr, "actions": ["create"], "type": type_,
                             "name": resource, "after": name})
@@ -200,7 +214,7 @@ def apply(path):
                 log(f"create {name} {roles[name]}")
         if actions == ["update"] and change["type"] == TYPES[1]:
             resources[addr]["values"]["role"] = roles[change["after"]]
-        elif actions == ["update"] and change["name"] != "bench" and change["name"] != "bench_bootstrap":
+        elif actions == ["update"] and change["name"] not in ("bench", "bench_etcd", "bench_bootstrap"):
             sim["violations"].append(f"updated {addr}")
     sim["resources"] = list(resources.values())
     sim["applied_roles"] = roles
@@ -286,7 +300,8 @@ def kubectl(host, argv):
 def etcdctl(argv):
     if argv == ["member", "list", "-w", "simple"]:
         for m in sim["members"]:
-            print(f"{m['id']}, started, {m['name']}, https://x:2380, https://x:2379, false")
+            ip = m.get("client_ip") or sim["hosts"].get(m["node"], {}).get("ip", "x")
+            print(f"{m['id']}, started, {m['name']}, https://{ip}:2380, https://{ip}:2379, false")
     elif argv == ["endpoint", "health"]:
         if not all(sim["hosts"].get(m["node"], {}).get("rke2") for m in sim["members"]):
             fail("unhealthy")
@@ -326,6 +341,21 @@ def ssh():
         fail(f"ssh: connect to host {ip}: No route to host")
     if argv[:3] == ["sudo", "-n", "/var/lib/rancher/rke2/bin/kubectl"]:
         kubectl(host, argv[4:])
+    elif argv == ["sudo", "-n", "cat", "/etc/rancher/rke2/config.yaml"]:
+        sys.stdout.write(rke2_config(host))
+    elif argv[:3] == ["sudo", "-n", "sh"] and '"$1.new"' in argv[4] and argv[5:] == [
+            "sh", "/etc/rancher/rke2/config.yaml"]:
+        sim["hosts"][host]["config"] = sys.stdin.read()
+        log(f"configure {host}")
+    elif argv == ["sudo", "-n", "systemctl", "restart", "rke2-server.service"]:
+        match = re.search(r'^  - "etcd-servers=(.*)"$', rke2_config(host), re.M)
+        sim["hosts"][host]["etcd_servers"] = match.group(1) if match else None
+        log(f"restart {host}")
+    elif argv == ["ps", "-C", "kube-apiserver", "-o", "args="]:
+        if not sim["hosts"][host]["rke2"] or sim["hosts"][host]["role"] == "etcd":
+            sys.exit(1)
+        etcd_servers = sim["hosts"][host].get("etcd_servers") or "https://127.0.0.1:2379"
+        print(f"kube-apiserver --etcd-servers={etcd_servers} --goaway-chance=0.001")
     elif argv[:3] == ["sudo", "-n", "sh"] and "systemctl disable --now rke2-server.service" in argv[-1]:
         sim["hosts"][host]["rke2"] = False
         check_invariants(f"stopping {host}")
@@ -402,6 +432,7 @@ class MigrateToDedicatedEtcdTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.directory = Path(self.temporary.name)
         shutil.copy(SCRIPT, self.directory / SCRIPT.name)
+        shutil.copy(LIBRARY, self.directory / LIBRARY.name)
         self.key = self.directory / "jump_host.key"
         self.key.write_text("dummy key\n")
         self.key.chmod(0o600)
@@ -450,10 +481,10 @@ class MigrateToDedicatedEtcdTest(unittest.TestCase):
         self.assertEqual(bootstrap, {"bench-etcd-01", "bench-etcd-01-cloudinit"})
         bootstrap_ip = sim["hosts"]["bench-etcd-01"]["ip"]
         self.assertIsNone(sim["hosts"]["bench-etcd-01"]["server"])
-        for name in ("bench-etcd-02", "bench-etcd-03", "bench-cp-01", "bench-cp-02"):
+        for name in ("bench-etcd-02", "bench-etcd-03", "bench-cp-01", "bench-cp-02", "bench-cp-03"):
             self.assertEqual(sim["hosts"][name]["server"], bootstrap_ip, name)
         expected = "".join(f"server {n} {sim['hosts'][n]['ip']}:6443 check\n"
-                           for n in ("bench-cp-01", "bench-cp-02"))
+                           for n in ("bench-cp-01", "bench-cp-02", "bench-cp-03"))
         self.assertEqual(sim["haproxy"], {"bench-lb-01": expected, "bench-lb-02": expected})
         workers = [r for r in sim["resources"] if r["name"] == "bench_worker"]
         self.assertEqual(len(workers), sim["worker_count"])
@@ -464,7 +495,7 @@ class MigrateToDedicatedEtcdTest(unittest.TestCase):
         result = self.run_migration()
         self.assert_migrated(result)
         sim = self.sim
-        self.assertEqual(sim["applies"], 7)
+        self.assertEqual(sim["applies"], 6)
         changes = [line for line in sim["log"]
                    if not line.startswith("drain") and not line.startswith("push")]
         self.assertEqual(changes, [
@@ -478,11 +509,9 @@ class MigrateToDedicatedEtcdTest(unittest.TestCase):
             "stop bench-cp-01", "delete node bench-cp-01",
             'mv harvester_virtualmachine.bench_bootstrap harvester_virtualmachine.bench["bench-cp-01"]',
             'mv harvester_cloudinit_secret.bench_bootstrap harvester_cloudinit_secret.bench["bench-cp-01"]',
-            'mv harvester_virtualmachine.bench["bench-etcd-01"] harvester_virtualmachine.bench_bootstrap',
-            'mv harvester_cloudinit_secret.bench["bench-etcd-01"] harvester_cloudinit_secret.bench_bootstrap',
+            'mv harvester_virtualmachine.bench_etcd["bench-etcd-01"] harvester_virtualmachine.bench_bootstrap',
+            'mv harvester_cloudinit_secret.bench_etcd["bench-etcd-01"] harvester_cloudinit_secret.bench_bootstrap',
             "delete bench-cp-01", "create bench-cp-01 control-plane",
-            "stop bench-cp-03", "delete node bench-cp-03",
-            "delete bench-cp-03",
         ])
 
     def test_resumes_after_failed_apply_once_server_was_removed(self):
@@ -545,7 +574,17 @@ class MigrateToDedicatedEtcdTest(unittest.TestCase):
         result = self.run_migration()
         self.assert_migrated(result)
         self.assertIn("already uses dedicated etcd nodes", result.stdout)
-        self.assertEqual(self.sim["applies"], 7)
+        self.assertEqual(self.sim["applies"], 6)
+
+    def test_two_control_plane_servers_point_to_add_script(self):
+        sim = stacked_simulation()
+        sim["outputs"]["rke2_servers"] = {"bootstrap": "bench-etcd-01", "roles": {
+            n: r for n, r in DEDICATED.items() if n != "bench-cp-03"}}
+        self.write(sim)
+        result = self.run_migration()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("add-control-plane-server.sh", result.stderr)
+        self.assertEqual(self.sim["plans"], 0)
 
     def test_plan_changing_workers_is_not_applied(self):
         self.write(stacked_simulation())

@@ -34,8 +34,9 @@ write_files:
       node-taint:
         - "CriticalAddonsOnly=true:NoExecute"
 %{ if rke2_role == "control-plane" ~}
-      # Control-plane only: the API server reaches etcd through the RKE2 etcd
-      # proxy, seeded from the server address, which must run etcd.
+      # Control-plane only: the server address must run etcd. The API server
+      # connects to the etcd-only servers directly (etcd-servers below), or
+      # without any to the RKE2 etcd proxy on 127.0.0.1:2379.
       disable-etcd: true
 %{ else ~}
       etcd-expose-metrics: true
@@ -64,6 +65,11 @@ write_files:
       # stays on one server until a connection to it fails.
       kube-apiserver-arg:
         - "goaway-chance=0.001"
+%{ if rke2_role == "control-plane" && length(etcd_servers) > 0 ~}
+        # Replaces the RKE2 etcd proxy, which closes every connection to a
+        # member when one 1-second supervisor health probe to it times out.
+        - "etcd-servers=${join(",", etcd_servers)}"
+%{ endif ~}
 %{ endif ~}
 users:
   - name: opensuse

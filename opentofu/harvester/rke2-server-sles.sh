@@ -27,6 +27,7 @@ spec:
     kubeProxyReplacement: true
     k8sServiceHost: localhost
     k8sServicePort: 6443
+    updateStrategy: {rollingUpdate: {maxUnavailable: 10%}}
     # Bootstrap URLs only. With more than one, the agent switches to the
     # kubernetes Service once synced, and Cilium's socket LB picks a random API
     # server on every new connection, so GOAWAY spreads the agents. Through

@@ -64,8 +64,10 @@ locals {
     bench-cp-02   = { address = "192.168.64.10", role = "all" }
     bench-etcd-01 = { address = "192.168.64.10", role = "etcd" }
     bench-cp-03   = { address = "192.168.64.10", role = "control-plane" }
+    bench-cp-04   = { address = "192.168.64.10", role = "control-plane", etcd_servers = [] }
   } : name => templatefile("${path.module}/server-cloud-config.yml", {
     node_name = name, server_address = server.address, rke2_role = server.role
+    etcd_servers = lookup(server, "etcd_servers", ["https://192.168.64.10:2379", "https://192.168.64.20:2379"])
     rke2_token = "test-token"
     bench_public_key = "ssh-ed25519 test-bench"
     harvester_public_key = "ssh-ed25519 test-harvester"
@@ -190,8 +192,16 @@ locals {
         self.assertFalse(any(key in rke2 for key in (
             "disable-apiserver", "disable-controller-manager", "disable-scheduler")))
         self.assertIn("concurrent-deployment-syncs=20", rke2["kube-controller-manager-arg"])
-        self.assertEqual(rke2["kube-apiserver-arg"], ["goaway-chance=0.001"])
+        self.assertEqual(rke2["kube-apiserver-arg"], [
+            "goaway-chance=0.001",
+            "etcd-servers=https://192.168.64.10:2379,https://192.168.64.20:2379",
+        ])
         self.assertEqual(rke2["server"], "https://192.168.64.10:9345")
+
+    def test_control_plane_only_server_without_etcd_servers_uses_rke2_proxy(self):
+        rke2 = self.server_rke2_config("bench-cp-04")
+        self.assertTrue(rke2["disable-etcd"])
+        self.assertEqual(rke2["kube-apiserver-arg"], ["goaway-chance=0.001"])
 
     def test_api_manifests_are_skipped_on_etcd_only_servers(self):
         script = (MODULE / "rke2-server-sles.sh").read_text()

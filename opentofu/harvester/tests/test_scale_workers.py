@@ -27,7 +27,10 @@ if command == "tofu":
             {"type": "harvester_virtualmachine", "name": resource, "values": {"name": name}}
             for resource, name in settings.get("servers", [])
         ]
-        print(json.dumps({"values": {"root_module": {"resources": servers + [
+        outputs = {}
+        if "roles" in settings:
+            outputs["rke2_servers"] = {"value": {"roles": settings["roles"]}}
+        print(json.dumps({"values": {"outputs": outputs, "root_module": {"resources": servers + [
             {"type": "harvester_virtualmachine", "name": "bench_worker", "index": name}
             for name in names
         ]}}}))
@@ -63,7 +66,7 @@ elif command == "ssh":
         sys.exit(1)
     topology = (directory / "topologies").read_text().split()[-1]
     if topology == "dedicated-etcd":
-        names = ["bench-etcd-01", "bench-etcd-02", "bench-etcd-03", "bench-cp-01", "bench-cp-02"]
+        names = ["bench-etcd-01", "bench-etcd-02", "bench-etcd-03", "bench-cp-01", "bench-cp-02", "bench-cp-03"]
     else:
         names = ["bench-cp-01", "bench-cp-02", "bench-cp-03"]
     names += [f"bench-wk-{i:02d}" for i in range(1, count + 1)]
@@ -83,7 +86,10 @@ else:
 
 STACKED = [("bench_bootstrap", "bench-cp-01"), ("bench", "bench-cp-02"), ("bench", "bench-cp-03")]
 DEDICATED = [("bench_bootstrap", "bench-etcd-01")] + [
-    ("bench", name) for name in ("bench-etcd-02", "bench-etcd-03", "bench-cp-01", "bench-cp-02")]
+    ("bench", name) for name in ("bench-etcd-02", "bench-etcd-03", "bench-cp-01", "bench-cp-02", "bench-cp-03")]
+DEDICATED_ROLES = {"bench-etcd-01": "etcd", "bench-etcd-02": "etcd", "bench-etcd-03": "etcd",
+                   "bench-cp-01": "control-plane", "bench-cp-02": "control-plane",
+                   "bench-cp-03": "control-plane"}
 
 
 class ScaleWorkersTest(unittest.TestCase):
@@ -238,10 +244,20 @@ class ScaleWorkersTest(unittest.TestCase):
         self.assertEqual(self.topologies, ["dedicated-etcd"] * 3)
 
     def test_detects_deployed_dedicated_etcd_control_plane(self):
-        result, applies, _ = self.run_scaling(50, 100, servers=DEDICATED)
-        self.assert_success(result)
-        self.assertIn("Control plane: dedicated-etcd.", result.stdout)
-        self.assertEqual(self.topologies, ["dedicated-etcd"] * len(applies))
+        for roles in (None, DEDICATED_ROLES):
+            with self.subTest(roles=roles):
+                settings = {} if roles is None else {"roles": roles}
+                result, applies, _ = self.run_scaling(50, 100, servers=DEDICATED, **settings)
+                self.assert_success(result)
+                self.assertIn("Control plane: dedicated-etcd.", result.stdout)
+                self.assertEqual(self.topologies, ["dedicated-etcd"] * len(applies))
+
+    def test_refuses_dedicated_etcd_with_two_control_plane_servers(self):
+        roles = {n: r for n, r in DEDICATED_ROLES.items() if n != "bench-cp-03"}
+        result, applies, _ = self.run_scaling(50, 100, servers=DEDICATED[:-1], roles=roles)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("add-control-plane-server.sh", result.stderr)
+        self.assertEqual(applies, [])
 
     def test_detects_deployed_stacked_control_plane(self):
         result, applies, _ = self.run_scaling(50, 100, servers=STACKED)
@@ -262,13 +278,13 @@ class ScaleWorkersTest(unittest.TestCase):
                 self.assertEqual(applies, [])
 
     def test_refuses_to_scale_during_control_plane_migration(self):
-        midway = STACKED + [("bench", "bench-etcd-01")]
-        swapped = [("bench_bootstrap", "bench-etcd-01")] + [
-            ("bench", name) for name in ("bench-etcd-02", "bench-etcd-03",
-                                         "bench-cp-01", "bench-cp-02", "bench-cp-03")]
-        for servers in (midway, swapped):
+        midway = (STACKED + [("bench", "bench-etcd-01")], None)
+        # Step 6 swapped the bootstrap server before replacing bench-cp-01.
+        swapped = (DEDICATED, {**DEDICATED_ROLES, "bench-cp-01": "all"})
+        for servers, roles in (midway, swapped):
             with self.subTest(servers=servers):
-                result, applies, _ = self.run_scaling(50, servers=servers)
+                settings = {} if roles is None else {"roles": roles}
+                result, applies, _ = self.run_scaling(50, servers=servers, **settings)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("migration may be in progress", result.stderr)
                 self.assertEqual(applies, [])

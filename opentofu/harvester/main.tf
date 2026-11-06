@@ -52,13 +52,34 @@ variable "rke2_agent_version" {
 }
 
 variable "rke2_control_plane" {
-  description = "Control-plane topology. stacked: bench-cp-01..03 run etcd and the control plane. dedicated-etcd: bench-etcd-01..03 run only etcd and bench-cp-01..02 only the control plane. Convert a running stacked cluster with migrate-to-dedicated-etcd.sh, not by changing this value."
+  description = "Control-plane topology. stacked: bench-cp-01..03 run etcd and the control plane. dedicated-etcd: bench-etcd-01..03 run only etcd and bench-cp-01..03 only the control plane. Convert a running stacked cluster with migrate-to-dedicated-etcd.sh, and add bench-cp-03 to a running dedicated-etcd cluster with two control-plane servers with add-control-plane-server.sh, not by changing this value. Required: a wrong value destroys the other topology's servers, so it has no default."
   type        = string
-  default     = "stacked"
 
   validation {
     condition     = contains(["stacked", "dedicated-etcd"], var.rke2_control_plane)
     error_message = "rke2_control_plane must be stacked or dedicated-etcd."
+  }
+}
+
+variable "control_plane_cpu" {
+  description = "vCPUs of the servers that run the control plane (roles all and control-plane). etcd-only servers keep 8. Changing it updates the VMs in place without restarting them; restart each VM (virtctl restart) for the new size to take effect."
+  type        = number
+  default     = 16
+
+  validation {
+    condition     = var.control_plane_cpu >= 1 && floor(var.control_plane_cpu) == var.control_plane_cpu
+    error_message = "control_plane_cpu must be a positive integer."
+  }
+}
+
+variable "control_plane_memory" {
+  description = "Memory of the servers that run the control plane (roles all and control-plane), e.g. 16Gi. etcd-only servers keep 16Gi. Like control_plane_cpu, it takes effect when the VM restarts."
+  type        = string
+  default     = "16Gi"
+
+  validation {
+    condition     = can(regex("^[1-9][0-9]*Gi$", var.control_plane_memory))
+    error_message = "control_plane_memory must be a whole number of Gi, e.g. 16Gi."
   }
 }
 
@@ -90,17 +111,30 @@ locals {
       "bench-etcd-03" = "etcd"
       "bench-cp-01"   = "control-plane"
       "bench-cp-02"   = "control-plane"
+      "bench-cp-03"   = "control-plane"
     }
   }
   rke2_server_roles = var.rke2_server_roles != null ? var.rke2_server_roles : local.rke2_topologies[var.rke2_control_plane]
   # The first server must run etcd: bench-cp-01 while it still does, otherwise bench-etcd-01.
   rke2_bootstrap_node = lookup(local.rke2_server_roles, "bench-cp-01", "") == "all" ? "bench-cp-01" : "bench-etcd-01"
-  rke2_joining_nodes  = { for name, role in local.rke2_server_roles : name => role if name != local.rke2_bootstrap_node }
-  rke2_worker_nodes   = toset([for i in range(1, var.rke2_worker_count + 1) : format("bench-wk-%02d", i)])
-  rke2_lb_nodes       = { "bench-lb-01" = 150, "bench-lb-02" = 100 }
+  # Etcd-only joiners are a separate resource: control-plane servers render their addresses.
+  rke2_etcd_joining_nodes = { for name, role in local.rke2_server_roles : name => role if name != local.rke2_bootstrap_node && role == "etcd" }
+  rke2_joining_nodes      = { for name, role in local.rke2_server_roles : name => role if name != local.rke2_bootstrap_node && role != "etcd" }
+  rke2_server_cpu         = { for name, role in local.rke2_server_roles : name => role == "etcd" ? 8 : var.control_plane_cpu }
+  rke2_server_memory      = { for name, role in local.rke2_server_roles : name => role == "etcd" ? "16Gi" : var.control_plane_memory }
+  rke2_worker_nodes       = toset([for i in range(1, var.rke2_worker_count + 1) : format("bench-wk-%02d", i)])
+  rke2_lb_nodes           = { "bench-lb-01" = 150, "bench-lb-02" = 100 }
   rke2_server_ips = merge(
     { (local.rke2_bootstrap_node) = local.rke2_bootstrap_ip },
+    { for name, vm in harvester_virtualmachine.bench_etcd : name => vm.network_interface[0].ip_address },
     { for name, vm in harvester_virtualmachine.bench : name => vm.network_interface[0].ip_address }
+  )
+  # Control-plane-only API servers connect to these etcd members directly
+  # rather than through the RKE2 etcd proxy on 127.0.0.1:2379, which drops all
+  # connections to a member when one supervisor health probe times out.
+  rke2_etcd_servers = concat(
+    local.rke2_server_roles[local.rke2_bootstrap_node] == "etcd" ? ["https://${local.rke2_bootstrap_ip}:2379"] : [],
+    [for name, vm in harvester_virtualmachine.bench_etcd : "https://${vm.network_interface[0].ip_address}:2379"]
   )
   # HAProxy only forwards to servers running the API server; etcd-only nodes have none.
   rke2_apiserver_ips = {
@@ -121,6 +155,7 @@ locals {
     harvester_public_key = data.harvester_ssh_key.bench_dual_network.public_key
     rke2_api_vip         = var.rke2_api_vip
     rke2_cluster_cidr    = local.rke2_cluster_cidr
+    etcd_servers         = []
   }
 }
 
@@ -145,8 +180,8 @@ resource "harvester_cloudinit_secret" "bench_bootstrap" {
   }
 }
 
-resource "harvester_cloudinit_secret" "bench" {
-  for_each = local.rke2_joining_nodes
+resource "harvester_cloudinit_secret" "bench_etcd" {
+  for_each = local.rke2_etcd_joining_nodes
 
   name      = "${each.key}-cloudinit"
   namespace = "default"
@@ -164,14 +199,36 @@ resource "harvester_cloudinit_secret" "bench" {
   }
 }
 
+resource "harvester_cloudinit_secret" "bench" {
+  for_each = local.rke2_joining_nodes
+
+  name      = "${each.key}-cloudinit"
+  namespace = "default"
+  # Cloud-init only applies this on first boot; use-direct-etcd.sh pushes
+  # etcd-servers to running control-plane servers.
+  user_data = sensitive(templatefile("${path.module}/server-cloud-config.yml", merge(local.rke2_cloud_config_vars, {
+    node_name      = each.key
+    server_address = local.rke2_bootstrap_ip
+    rke2_role      = each.value
+    etcd_servers   = local.rke2_etcd_servers
+  })))
+
+  lifecycle {
+    precondition {
+      condition     = local.rke2_bootstrap_ip != null && local.rke2_bootstrap_ip != ""
+      error_message = "${local.rke2_bootstrap_node} has no IP address; joining servers need it as their RKE2 server address."
+    }
+  }
+}
+
 resource "harvester_virtualmachine" "bench_bootstrap" {
   name      = local.rke2_bootstrap_node
   namespace = "default"
   labels = {
     "node-role" = local.rke2_server_roles[local.rke2_bootstrap_node] == "etcd" ? "etcd" : "control-plane"
   }
-  cpu          = 8
-  memory       = "16Gi"
+  cpu          = local.rke2_server_cpu[local.rke2_bootstrap_node]
+  memory       = local.rke2_server_memory[local.rke2_bootstrap_node]
   machine_type = "q35"
   run_strategy = "RerunOnFailure"
   ssh_keys     = ["default/tferrandiz"]
@@ -182,7 +239,7 @@ resource "harvester_virtualmachine" "bench_bootstrap" {
 
   requests {
     cpu    = "500m"
-    memory = "16Gi"
+    memory = local.rke2_server_memory[local.rke2_bootstrap_node]
   }
 
   network_interface {
@@ -205,7 +262,8 @@ resource "harvester_virtualmachine" "bench_bootstrap" {
     access_mode        = "ReadWriteMany"
     volume_mode        = "Block"
     volume_name        = "${local.rke2_bootstrap_node}-disk-0"
-    auto_delete        = true
+    # Etcd-only disks hold the only copy of the cluster data: keep them if the VM is destroyed.
+    auto_delete = local.rke2_server_roles[local.rke2_bootstrap_node] != "etcd"
   }
 
   input {
@@ -226,10 +284,10 @@ resource "harvester_virtualmachine" "bench" {
   name      = each.key
   namespace = "default"
   labels = {
-    "node-role" = each.value == "etcd" ? "etcd" : "control-plane"
+    "node-role" = "control-plane"
   }
-  cpu          = 8
-  memory       = "16Gi"
+  cpu          = local.rke2_server_cpu[each.key]
+  memory       = local.rke2_server_memory[each.key]
   machine_type = "q35"
   run_strategy = "RerunOnFailure"
   ssh_keys     = ["default/tferrandiz"]
@@ -240,7 +298,7 @@ resource "harvester_virtualmachine" "bench" {
 
   requests {
     cpu    = "500m"
-    memory = "16Gi"
+    memory = local.rke2_server_memory[each.key]
   }
 
   network_interface {
@@ -276,6 +334,96 @@ resource "harvester_virtualmachine" "bench" {
     user_data_secret_name = harvester_cloudinit_secret.bench[each.key].name
   }
 
+}
+
+resource "harvester_virtualmachine" "bench_etcd" {
+  for_each = local.rke2_etcd_joining_nodes
+
+  name      = each.key
+  namespace = "default"
+  labels = {
+    "node-role" = "etcd"
+  }
+  cpu          = local.rke2_server_cpu[each.key]
+  memory       = local.rke2_server_memory[each.key]
+  machine_type = "q35"
+  run_strategy = "RerunOnFailure"
+  ssh_keys     = ["default/tferrandiz"]
+
+  node_selector = {
+    "network.harvesterhci.io/cluster-net" = "true"
+  }
+
+  requests {
+    cpu    = "500m"
+    memory = local.rke2_server_memory[each.key]
+  }
+
+  network_interface {
+    name           = "default"
+    network_name   = "default/vm-net-2085"
+    model          = "virtio"
+    type           = "bridge"
+    wait_for_lease = true
+  }
+
+  disk {
+    name               = "disk-0"
+    type               = "disk"
+    size               = "40Gi"
+    bus                = "virtio"
+    boot_order         = 1
+    image              = "default/image-x49tz"
+    storage_class_name = "longhorn-image-x49tz"
+    access_mode        = "ReadWriteMany"
+    volume_mode        = "Block"
+    volume_name        = "${each.key}-disk-0"
+    # The only copies of the cluster data: keep them if the VM is destroyed.
+    auto_delete = false
+  }
+
+  input {
+    name = "tablet"
+    type = "tablet"
+    bus  = "usb"
+  }
+
+  cloudinit {
+    type                  = "noCloud"
+    user_data_secret_name = harvester_cloudinit_secret.bench_etcd[each.key].name
+  }
+
+}
+
+# Etcd-only joiners were in bench before bench_etcd existed.
+moved {
+  from = harvester_cloudinit_secret.bench["bench-etcd-01"]
+  to   = harvester_cloudinit_secret.bench_etcd["bench-etcd-01"]
+}
+
+moved {
+  from = harvester_virtualmachine.bench["bench-etcd-01"]
+  to   = harvester_virtualmachine.bench_etcd["bench-etcd-01"]
+}
+
+moved {
+  from = harvester_cloudinit_secret.bench["bench-etcd-02"]
+  to   = harvester_cloudinit_secret.bench_etcd["bench-etcd-02"]
+}
+
+moved {
+  from = harvester_virtualmachine.bench["bench-etcd-02"]
+  to   = harvester_virtualmachine.bench_etcd["bench-etcd-02"]
+}
+
+moved {
+  from = harvester_cloudinit_secret.bench["bench-etcd-03"]
+  to   = harvester_cloudinit_secret.bench_etcd["bench-etcd-03"]
+}
+
+moved {
+  from = harvester_virtualmachine.bench["bench-etcd-03"]
+  to   = harvester_virtualmachine.bench_etcd["bench-etcd-03"]
 }
 
 resource "harvester_cloudinit_secret" "bench_lb" {
@@ -596,6 +744,7 @@ output "virtual_machines" {
     {
       for name, vm in merge(
         { (local.rke2_bootstrap_node) = harvester_virtualmachine.bench_bootstrap },
+        harvester_virtualmachine.bench_etcd,
         harvester_virtualmachine.bench,
         harvester_virtualmachine.bench_lb,
         harvester_virtualmachine.bench_worker
@@ -618,9 +767,9 @@ output "virtual_machines" {
 }
 
 output "rke2_servers" {
-  description = "RKE2 server roles (all, etcd or control-plane) by node name, and the bootstrap server. migrate-to-dedicated-etcd.sh resumes from these roles."
+  description = "RKE2 server roles (all, etcd or control-plane) by node name, and the bootstrap server. migrate-to-dedicated-etcd.sh and add-control-plane-server.sh resume from these roles."
   # Not updated when creating a server fails.
-  depends_on = [harvester_virtualmachine.bench_bootstrap, harvester_virtualmachine.bench]
+  depends_on = [harvester_virtualmachine.bench_bootstrap, harvester_virtualmachine.bench_etcd, harvester_virtualmachine.bench]
   value = {
     bootstrap = local.rke2_bootstrap_node
     roles     = local.rke2_server_roles
@@ -628,6 +777,6 @@ output "rke2_servers" {
 }
 
 output "haproxy_config" {
-  description = "HAProxy configuration for the current API servers. Cloud-init only applies it on first boot; migrate-to-dedicated-etcd.sh pushes it to running load balancers."
+  description = "HAProxy configuration for the current API servers. Cloud-init only applies it on first boot; migrate-to-dedicated-etcd.sh and add-control-plane-server.sh push it to running load balancers."
   value       = local.haproxy_config
 }

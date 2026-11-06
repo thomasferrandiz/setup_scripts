@@ -57,15 +57,34 @@ load balancers.
 
 ## Control-plane topologies
 
-`rke2_control_plane` selects the server layout:
+`rke2_control_plane` selects the server layout. It has no default: applying
+the wrong topology destroys the other topology's server VMs (and, before this
+safeguard, the etcd disks with them). Prefer the scripts below, which pass it
+for you; a direct `tofu plan`/`apply` needs `-var rke2_control_plane=...`.
 
-- `stacked` (default): `bench-cp-01`..`03` each run etcd and the control plane.
+- `stacked`: `bench-cp-01`..`03` each run etcd and the control plane.
 - `dedicated-etcd`: `bench-etcd-01`..`03` run only etcd (`disable-apiserver`,
-  `disable-controller-manager`, `disable-scheduler`) and `bench-cp-01`..`02`
+  `disable-controller-manager`, `disable-scheduler`) and `bench-cp-01`..`03`
   run only the control plane (`disable-etcd`). `bench-etcd-01` bootstraps the
   cluster, since a control-plane-only server cannot be the first one, and
   every other server joins at `https://<bench-etcd-01 IP>:9345`. The etcd VMs
-  carry the Harvester label `node-role=etcd`.
+  carry the Harvester label `node-role=etcd`. Their disks have
+  `auto_delete = false`: destroying an etcd VM (including `tofu destroy`)
+  keeps its `bench-etcd-NN-disk-0` PVC, which still holds the etcd data and
+  snapshots. Delete the leftover PVCs by hand before recreating the etcd VMs
+  for a new cluster.
+  The control-plane servers' kube-apiserver connects to the etcd-only servers
+  directly (`etcd-servers=https://<bench-etcd-NN IP>:2379,...`) instead of
+  through the RKE2 etcd proxy on `127.0.0.1:2379`. That proxy probes each
+  member's supervisor (`:9345/ping`) every 5–10 s with a 1 s timeout, and one
+  timeout closes every API server connection to that member: it caused all
+  the errors of
+  [split control plane run 06](./kube-burner-results/1000wk_cilium_splitcp/run_06_analysis.md).
+  The etcd-only joiners are the `bench_etcd` resources, so the control-plane
+  servers' cloud-init can list their addresses; `moved` blocks move them from
+  `bench` in older states. Cloud-init only applies this on first boot: use
+  [use-direct-etcd.sh](#pointing-the-api-servers-at-etcd-directly) on a
+  running cluster.
 
 Etcd-only servers keep `etcd-expose-metrics` and the `CriticalAddonsOnly`
 taint, but not the kube-apiserver or kube-controller-manager arguments. HAProxy
@@ -90,6 +109,41 @@ CONTROL_PLANE=dedicated-etcd bash ./scale-workers.sh
 VMs in state, so `CONTROL_PLANE` is only needed for a fresh deployment. It
 refuses a `CONTROL_PLANE` that differs from the deployed one, and refuses to
 run while the server VMs match neither topology (a migration in progress).
+It also refuses a dedicated-etcd cluster deployed when this topology had only
+`bench-cp-01`..`02` (detected from the `rke2_servers` output), since its apply
+would add `bench-cp-03` without updating HAProxy; add it with
+[add-control-plane-server.sh](#adding-bench-cp-03-to-a-dedicated-etcd-cluster)
+first.
+
+### Server sizing
+
+Servers that run the control plane (roles `all` and `control-plane`) get
+`control_plane_cpu` vCPUs (default 16) and `control_plane_memory` (default
+`16Gi`). Etcd-only servers stay at 8 vCPUs and 16 GiB, since etcd stayed below
+20 % CPU in the split control-plane runs while the API servers saturated 8
+vCPUs (see
+[run 04](./kube-burner-results/1000wk_cilium_splitcp/run_04_analysis.md)).
+
+The VMs have a single CPU socket, so Harvester cannot hotplug vCPUs. Apply a
+size change with `bash ./scale-workers.sh <current worker count>`, which keeps
+the deployed topology, not with a bare `tofu apply`. It applies without a
+prompt, so to review the change first run `tofu plan -var
+rke2_control_plane=<deployed topology> -var rke2_worker_count=<count>`: it
+must only update VMs in place, and any destroyed server VM means the topology
+is wrong. The
+change updates the running VMs in place, without restarting them (the
+provider's `restart_after_update` stays off), and Harvester marks them
+`RestartRequired`. Restart one server at a time, and wait for its node to be
+Ready before the next:
+
+```bash
+kubectl --kubeconfig local.yaml -n default get vm bench-cp-03 \
+  -o jsonpath='{.status.conditions[?(@.type=="RestartRequired")].status}'
+virtctl --kubeconfig local.yaml -n default restart bench-cp-03
+```
+
+Restarting API servers moves their clients to the others, so run
+[rebalance.sh](./kube-burner/README.md#rebalancing-after-a-control-plane-restart) before the next benchmark.
 
 ### Migrating a stacked cluster to dedicated etcd
 
@@ -110,10 +164,9 @@ Ready with its role labels, every etcd member to be started (not a learner) and
 4. and 5. Replace `bench-cp-03`, then `bench-cp-02`, with control-plane-only VMs.
 6. Replace `bench-cp-01`, and make `bench-etcd-01` the bootstrap server with
    `tofu state mv` (neither VM is recreated by the move).
-7. Remove `bench-cp-03`.
 
 Etcd keeps quorum and at least two API servers stay up throughout. Before
-replacing or removing a server, the script drains it, stops RKE2 on it
+replacing a server, the script drains it, stops RKE2 on it
 (`rke2-killall.sh`), and deletes its node, which makes RKE2 remove its etcd
 member (`etcdctl member remove` is used if it is still there after two
 minutes). Each step runs `tofu plan` with the current worker count, limited
@@ -130,7 +183,8 @@ other servers at `bench-etcd-01`, as their original `server:` address (the old
 `bench-cp-01`) no longer exists.
 
 The script needs `jump_host.key` like `scale-workers.sh` and `bench.key` on the
-jump host. It finds the load balancers' addresses with `kubectl` and
+jump host. It shares its SSH, health-check, plan and HAProxy helpers with
+`add-control-plane-server.sh` through `control-plane-lib.sh`. It finds the load balancers' addresses with `kubectl` and
 `local.yaml` (the Harvester kubeconfig of the provider), since OpenTofu state
 may have none or the VIP for them, and checks each one's `hostname` before
 updating it. The guest agent does not always report an address, so the last
@@ -144,6 +198,62 @@ running on the servers (only those tolerating `CriticalAddonsOnly`), and API
 clients connected to a removed server reconnect; run `kube-burner/rebalance.sh`
 afterwards to spread the connections again. The workers' rke2-agents keep
 running throughout but may take some time to update their list of servers.
+
+Earlier versions of the script also removed `bench-cp-03`, leaving two
+control-plane servers. It now stops with the roles of that layout and points
+to `add-control-plane-server.sh`.
+
+### Adding bench-cp-03 to a dedicated-etcd cluster
+
+[add-control-plane-server.sh](./add-control-plane-server.sh) adds
+`bench-cp-03` as a third control-plane-only server to a running dedicated-etcd
+cluster that has only `bench-cp-01` and `bench-cp-02`. Two API servers could
+not keep up with 150 QPS of Service creations in
+[split control plane run 01](./kube-burner-results/1000wk_cilium_splitcp/run_01_analysis.md).
+
+```bash
+cd opentofu/harvester
+bash ./add-control-plane-server.sh   # ASSUME_YES=yes skips the confirmation
+```
+
+It reads the roles of the last apply from the `rke2_servers` output, and
+continues only if they are the two-control-plane layout. With three
+control-plane servers it only checks the cluster, and it refuses any other
+layout (a stacked cluster or an interrupted migration). It waits for the
+current servers to be healthy, then runs one `tofu plan` with the same
+`-target` set and safeguards as the migration: no worker changes and no
+deletions. It applies that plan, which creates `bench-cp-03` joined at
+`https://<bench-etcd-01 IP>:9345`, and updates HAProxy on both load balancers.
+It then waits until `bench-cp-03` is Ready with the control-plane role and etcd
+is healthy. No other server is drained or restarted. Existing kubelet and Cilium
+connections stay on `bench-cp-01`..`02`, so run `kube-burner/rebalance.sh`
+afterwards. If it fails, fix the cause and rerun it.
+
+### Pointing the API servers at etcd directly
+
+[use-direct-etcd.sh](./use-direct-etcd.sh) gives the API servers of a running
+dedicated-etcd cluster the `etcd-servers` argument that new control-plane
+servers get from cloud-init.
+
+```bash
+cd opentofu/harvester
+bash ./use-direct-etcd.sh   # ASSUME_YES=yes skips the confirmation
+```
+
+It refuses any roles other than etcd-only and control-plane-only servers, and
+waits for the cluster to be healthy. It then plans and applies the servers
+with the same safeguards as the scripts above (no worker changes, no
+deletions). That apply moves `bench-etcd-02`..`03` to `bench_etcd` and updates
+the control-plane servers' cloud-init secrets, without recreating any VM.
+It checks that the etcd members' client URLs are the etcd-only servers'
+addresses in OpenTofu. Then, one control-plane server at a time, it adds
+`- "etcd-servers=..."` under `kube-apiserver-arg` in
+`/etc/rancher/rke2/config.yaml` and restarts `rke2-server`. It waits until
+the server's only `kube-apiserver` process has that argument and answers
+`/readyz`, and until every server is Ready and etcd healthy. Servers that
+already run with the argument are skipped, so it can be rerun after a failure.
+Run `kube-burner/rebalance.sh` afterwards: kubelets and Cilium agents leave
+each server while it restarts.
 
 This version of `main.tf` no longer contains the `moved` blocks of the
 earlier `bench_bootstrap` refactoring; apply an older checkout first if the

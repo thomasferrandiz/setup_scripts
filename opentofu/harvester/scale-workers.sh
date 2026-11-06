@@ -70,8 +70,15 @@ detected_topology=$(jq -r '
     elif $bootstrap == "bench-cp-01"
       and ($names - ["bench-cp-01", "bench-cp-02", "bench-cp-03"]) == [] then "stacked"
     elif $bootstrap == "bench-etcd-01"
-      and ($names - ["bench-etcd-01", "bench-etcd-02", "bench-etcd-03", "bench-cp-01", "bench-cp-02"]) == []
-      then "dedicated-etcd"
+      and ($names - ["bench-etcd-01", "bench-etcd-02", "bench-etcd-03", "bench-cp-01", "bench-cp-02", "bench-cp-03"]) == []
+      then
+        # The names match the last migration step too; the applied roles tell them apart.
+        {"bench-etcd-01": "etcd", "bench-etcd-02": "etcd", "bench-etcd-03": "etcd", "bench-cp-01": "control-plane",
+          "bench-cp-02": "control-plane", "bench-cp-03": "control-plane"} as $dedicated
+        | (.values.outputs.rke2_servers.value.roles // null) as $roles
+        | if $roles == null or $roles == $dedicated then "dedicated-etcd"
+          elif $roles == ($dedicated | del(.["bench-cp-03"])) then "two-control-plane"
+          else "unknown" end
     else "unknown"
     end
 ' <<< "$state")
@@ -83,6 +90,10 @@ case "$detected_topology" in
     echo "The server VMs in state match no control-plane topology; a control-plane migration may be in progress. Finish it with migrate-to-dedicated-etcd.sh first." >&2
     exit 1
     ;;
+  two-control-plane)
+    echo "The dedicated-etcd control plane has only bench-cp-01..02. Add bench-cp-03 with add-control-plane-server.sh first." >&2
+    exit 1
+    ;;
   *)
     if [[ -n "$requested_topology" && "$requested_topology" != "$detected_topology" ]]; then
       echo "CONTROL_PLANE=${requested_topology} does not match the deployed ${detected_topology} control plane. Use migrate-to-dedicated-etcd.sh to convert a stacked cluster." >&2
@@ -92,7 +103,7 @@ case "$detected_topology" in
     ;;
 esac
 if [[ "$topology" == dedicated-etcd ]]; then
-  server_nodes='["bench-etcd-01", "bench-etcd-02", "bench-etcd-03", "bench-cp-01", "bench-cp-02"]'
+  server_nodes='["bench-etcd-01", "bench-etcd-02", "bench-etcd-03", "bench-cp-01", "bench-cp-02", "bench-cp-03"]'
 else
   server_nodes='["bench-cp-01", "bench-cp-02", "bench-cp-03"]'
 fi
