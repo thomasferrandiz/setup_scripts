@@ -28,6 +28,9 @@ if args[:3] == ["--request-timeout=30s", "get", "nodes"]:
 elif args[0].startswith("--server="):
     print("# HELP go_goroutines\ngo_goroutines{x=\"y\"} 1\ngo_goroutines " +
           {"10.0.0.1": "60000", "10.0.0.2": "3000", "10.0.0.3": "45000"}[args[0].split("//")[1].split(":")[0]])
+elif args[2:4] == ["get", "daemonset"]:
+    if os.environ.get("NO_TRAEFIK") != "yes":
+        print("daemonset.apps/" + args[4])
 elif args[0] == "wait" and os.environ.get("FAIL_WAIT") == "yes":
     sys.exit(1)
 """
@@ -81,7 +84,7 @@ class RebalanceTests(unittest.TestCase):
                 if calls_file.exists() else []
             return result, calls
 
-    def test_restarts_cilium_then_agents_in_batches(self):
+    def test_restarts_cilium_then_traefik_then_agents_in_batches(self):
         result, calls = self.run_script(BATCH_SIZE="2")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("bench-cp-01 60000", result.stdout)
@@ -92,6 +95,16 @@ class RebalanceTests(unittest.TestCase):
         restart = kubectl.index(["-n", "kube-system", "rollout", "restart", "daemonset/cilium"])
         self.assertEqual(kubectl[restart + 1],
                          ["-n", "kube-system", "rollout", "status", "daemonset/cilium", "--timeout=60m"])
+        self.assertEqual(kubectl[restart + 2:restart + 5], [
+            ["-n", "kube-system", "get", "daemonset", "rke2-traefik", "--ignore-not-found",
+             "-o", "name"],
+            ["-n", "kube-system", "rollout", "restart", "daemonset/rke2-traefik"],
+            ["-n", "kube-system", "rollout", "status", "daemonset/rke2-traefik",
+             "--timeout=60m"],
+        ])
+        first_ssh = next(index for index, call in enumerate(calls) if call[0] == "ssh")
+        self.assertIn(["kubectl", "-n", "kube-system", "rollout", "status",
+                       "daemonset/rke2-traefik", "--timeout=60m"], calls[:first_ssh])
         targets = [call[-6] for call in calls if call[0] == "ssh"]
         self.assertEqual(sorted(targets), [
             "opensuse@10.0.1.1", "opensuse@10.0.1.2", "opensuse@10.0.1.3",
@@ -123,17 +136,29 @@ class RebalanceTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(len([call for call in calls if call[0] == "ssh"]), 2)
 
-    def test_can_skip_cilium_or_agents(self):
+    def test_can_skip_cilium_traefik_or_agents(self):
         result, calls = self.run_script(CILIUM="no")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse(any("rollout" in call for call in calls))
+        self.assertFalse(any("daemonset/cilium" in call for call in calls))
+        self.assertTrue(any("daemonset/rke2-traefik" in call for call in calls))
+        result, calls = self.run_script(TRAEFIK="no")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(any("rke2-traefik" in " ".join(call) for call in calls))
+        self.assertTrue(any("daemonset/cilium" in call for call in calls))
         result, calls = self.run_script(AGENTS="no")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(any(call[0] == "ssh" for call in calls))
         self.assertTrue(any("rollout" in call for call in calls))
 
+    def test_skips_missing_traefik(self):
+        result, calls = self.run_script(NO_TRAEFIK="yes")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("No rke2-traefik DaemonSet; skipping traefik.", result.stdout)
+        self.assertFalse(any("daemonset/rke2-traefik" in call for call in calls))
+        self.assertTrue(any(call[0] == "ssh" for call in calls))
+
     def test_rejects_invalid_settings(self):
-        for settings in ({"CILIUM": "maybe"}, {"AGENTS": "1"}, {"BATCH_SIZE": "0"},
+        for settings in ({"CILIUM": "maybe"}, {"TRAEFIK": "on"}, {"AGENTS": "1"}, {"BATCH_SIZE": "0"},
                          {"BATCH_SIZE": "1001"}, {"READY_TIMEOUT": "5m"}):
             result, calls = self.run_script(**settings)
             self.assertNotEqual(result.returncode, 0, settings)

@@ -1,18 +1,19 @@
 #!/bin/bash
-# Spread long-lived kubelet and Cilium connections across the API servers,
-# for example after a control-plane node restarted. goaway-chance alone takes
-# hours to move idle agents, and the rke2-agent load balancer never moves them
-# back to a server that came back.
+# Spread long-lived kubelet, Cilium and traefik connections across the API
+# servers, for example after a control-plane node restarted. goaway-chance alone
+# takes hours to move idle agents, and the rke2-agent load balancer never moves
+# them back to a server that came back.
 set -euo pipefail
 
 cilium=${CILIUM:-yes}
+traefik=${TRAEFIK:-yes}
 agents=${AGENTS:-yes}
 batch_size=${BATCH_SIZE:-50}
 ready_timeout=${READY_TIMEOUT:-300}
 rollout_timeout=${ROLLOUT_TIMEOUT:-60m}
 ssh_user=${SSH_USER:-opensuse}
 
-for setting in "CILIUM=$cilium" "AGENTS=$agents"; do
+for setting in "CILIUM=$cilium" "TRAEFIK=$traefik" "AGENTS=$agents"; do
   if [[ ! "${setting#*=}" =~ ^(yes|no)$ ]]; then
     echo "${setting%%=*} must be yes or no." >&2
     exit 1
@@ -74,6 +75,18 @@ if [[ "$cilium" == yes ]]; then
   echo "Restarting the Cilium agents..."
   kubectl -n kube-system rollout restart daemonset/cilium
   kubectl -n kube-system rollout status daemonset/cilium --timeout="$rollout_timeout"
+fi
+
+if [[ "$traefik" == yes ]]; then
+  # In-cluster clients reach the API through the kubernetes Service, so each
+  # restarted pod also picks a random API server.
+  if [[ -n "$(kubectl -n kube-system get daemonset rke2-traefik --ignore-not-found -o name)" ]]; then
+    echo "Restarting the traefik pods..."
+    kubectl -n kube-system rollout restart daemonset/rke2-traefik
+    kubectl -n kube-system rollout status daemonset/rke2-traefik --timeout="$rollout_timeout"
+  else
+    echo "No rke2-traefik DaemonSet; skipping traefik."
+  fi
 fi
 
 if [[ "$agents" == yes ]]; then

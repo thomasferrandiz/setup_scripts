@@ -319,18 +319,51 @@ restart, and before a benchmark, run `rebalance.sh` from the jump host. It needs
 ```
 
 It shows `go_goroutines` per API server, restarts the Cilium DaemonSet and waits
-for the rollout, then restarts `rke2-agent` on the Ready workers in parallel
+for the rollout, does the same for the `rke2-traefik` DaemonSet (skipped if
+traefik is disabled), then restarts `rke2-agent` on the Ready workers in parallel
 batches, waits for each batch to be Ready, and shows `go_goroutines` again. It
 stops at the first failed restart or batch that doesn't become Ready. Workers
 keep running their pods while `rke2-agent` restarts.
 
+traefik runs on every worker, and its pods reach the API servers through the
+`kubernetes` Service, so like Cilium they stay where they connected during a
+control-plane restart (split control plane, run 07: 55k / 41k / 23k goroutines).
+The chart rolls the DaemonSet one pod at a time, which would take hours for
+1,000 pods, so `../rke2-server-sles.sh` writes `rke2-traefik-config.yaml`, a
+HelmChartConfig that sets `maxUnavailable: 10%` like Cilium's. On an existing
+cluster, write it on every API server from the jump host (it changes only the
+update strategy, so no pod restarts):
+
+```bash
+for server in $(kubectl get nodes -l node-role.kubernetes.io/control-plane \
+  -o jsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}'); do
+  ssh "$server" sudo tee /var/lib/rancher/rke2/server/manifests/rke2-traefik-config.yaml \
+    >/dev/null <<'EOF'
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: rke2-traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    updateStrategy:
+      rollingUpdate:
+        maxUnavailable: 10%
+EOF
+done
+# Once the helm-install-rke2-traefik job has completed:
+kubectl -n kube-system get daemonset rke2-traefik \
+  -o jsonpath='{.spec.updateStrategy.rollingUpdate.maxUnavailable}{"\n"}'
+```
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `CILIUM` | `yes` | Restart the Cilium agents. |
+| `TRAEFIK` | `yes` | Restart the `rke2-traefik` pods. |
 | `AGENTS` | `yes` | Restart `rke2-agent` on the workers. |
 | `BATCH_SIZE` | `50` | Workers restarted at a time, 1 to 1000. |
 | `READY_TIMEOUT` | `300` | Seconds to wait for a batch to be Ready. |
-| `ROLLOUT_TIMEOUT` | `60m` | Timeout of the Cilium rollout. |
+| `ROLLOUT_TIMEOUT` | `60m` | Timeout of each DaemonSet rollout. |
 | `SSH_USER` | `opensuse` | SSH user on the workers. |
 
 The restarted rke2-agent load balancer picks a pseudo-random server, so the
@@ -346,8 +379,8 @@ limited to the 6 queues of 50 requests its hand allows. When the agents
 re-establish their watches, for example after an API server restart, many of
 them get `429` queue-full responses and retry. `../rke2-server-sles.sh` writes
 `cilium-apf.yaml` into the RKE2 manifests on every API server. It gives Cilium its
-own priority level, with about 85 of the default 600 seats per API server and
-one flow per ServiceAccount. Lease requests still match `system-leader-election`
+own priority level, with about 79 of the default 600 seats per API server
+(next to the `traefik` level below) and one flow per ServiceAccount. Lease requests still match `system-leader-election`
 first (precedence 100).
 
 To apply it to an existing cluster, from the jump host:
@@ -416,6 +449,74 @@ sudo rm /var/lib/rancher/rke2/server/manifests/cilium-apf.yaml
 kubectl delete flowschema cilium
 kubectl delete prioritylevelconfiguration cilium
 ```
+
+#### API Priority and Fairness for traefik
+
+RKE2 deploys its default ingress controller, `rke2-traefik`, as a DaemonSet on
+every worker. Each pod watches Services, EndpointSlices, Secrets, ConfigMaps,
+Ingresses and about 15 Traefik CRDs, so it is the largest watch population
+after Cilium. Its `kube-system:rke2-traefik` ServiceAccount fell into the same
+single `kube-system-service-accounts` flow: when a busy API server force-closed
+its slow Service watchers, the re-watches got about 1,000 `429` queue-full
+responses (split control plane, run 07). `../rke2-server-sles.sh` also writes
+`traefik-apf.yaml`, a `traefik` priority level (about 39 seats per API server)
+and a FlowSchema at precedence 860. All the pods share one ServiceAccount, so
+they stay one flow; the hand of 8 queues of 500 requests (4,000, against
+`workload-high`'s 6 × 50) is what absorbs the burst.
+
+To apply it to an existing cluster, from the jump host:
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: flowcontrol.apiserver.k8s.io/v1
+kind: PriorityLevelConfiguration
+metadata:
+  name: traefik
+spec:
+  type: Limited
+  limited:
+    nominalConcurrencyShares: 20
+    lendablePercent: 50
+    limitResponse:
+      type: Queue
+      queuing:
+        queues: 64
+        handSize: 8
+        queueLengthLimit: 500
+---
+apiVersion: flowcontrol.apiserver.k8s.io/v1
+kind: FlowSchema
+metadata:
+  name: traefik
+spec:
+  priorityLevelConfiguration:
+    name: traefik
+  matchingPrecedence: 860
+  distinguisherMethod:
+    type: ByUser
+  rules:
+    - subjects:
+        - kind: ServiceAccount
+          serviceAccount:
+            name: rke2-traefik
+            namespace: kube-system
+      resourceRules:
+        - verbs: ["*"]
+          apiGroups: ["*"]
+          resources: ["*"]
+          clusterScope: true
+          namespaces: ["*"]
+      nonResourceRules:
+        - verbs: ["*"]
+          nonResourceURLs: ["*"]
+EOF
+kubectl get flowschema,prioritylevelconfiguration traefik
+```
+
+Requests already queued or executing keep their old level; new ones (including
+every re-watch) use `priority_level="traefik"`. To roll back, delete both
+objects and remove `/var/lib/rancher/rke2/server/manifests/traefik-apf.yaml`
+from every API server, as for Cilium.
 
 ### kube-controller-manager metrics
 

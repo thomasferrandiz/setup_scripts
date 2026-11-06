@@ -43,8 +43,8 @@ The Cilium agents avoid it: they are given two bootstrap URLs
 (`k8s.apiServerURLs`, the VIP and `127.0.0.1`), and then switch to the
 `kubernetes` Service, where Cilium's socket load balancer picks a random API
 server for every new connection. After a control-plane restart,
-`kube-burner/rebalance.sh` restarts Cilium and the rke2-agents in batches to
-spread the connections again (see
+`kube-burner/rebalance.sh` restarts Cilium, traefik and the rke2-agents in
+batches to spread the connections again (see
 [rebalancing](./kube-burner/README.md#rebalancing-after-a-control-plane-restart)).
 
 The VMs connect to `default/vm-net-2085`. The Harvester load balancer cannot
@@ -89,8 +89,8 @@ for you; a direct `tofu plan`/`apply` needs `-var rke2_control_plane=...`.
 Etcd-only servers keep `etcd-expose-metrics` and the `CriticalAddonsOnly`
 taint, but not the kube-apiserver or kube-controller-manager arguments. HAProxy
 only forwards to servers that run the API server (the `haproxy_config` output).
-`rke2-server-sles.sh` writes the Cilium HelmChartConfig and `cilium-apf.yaml`
-manifests on every API server, since etcd-only servers do not apply manifests;
+`rke2-server-sles.sh` writes the Cilium and traefik HelmChartConfigs,
+`cilium-apf.yaml` and `traefik-apf.yaml` manifests on every API server, since etcd-only servers do not apply manifests;
 clusters created before this change only have them on `bench-cp-01`. Keep
 manual edits to these manifests identical on every API server.
 
@@ -455,7 +455,9 @@ replacement. The Cilium operator also tolerates the control-plane
 in the RKE2 config. It also installs `cilium-apf.yaml`, an API Priority and
 Fairness FlowSchema that gives the Cilium agents and operator their own priority
 level instead of sharing one kube-system flow (see
-[API Priority and Fairness for Cilium](./kube-burner/README.md#api-priority-and-fairness-for-cilium)).
+[API Priority and Fairness for Cilium](./kube-burner/README.md#api-priority-and-fairness-for-cilium)),
+and `traefik-apf.yaml`, the same for the `rke2-traefik` DaemonSet (see
+[API Priority and Fairness for traefik](./kube-burner/README.md#api-priority-and-fairness-for-traefik)).
 The agents serve their Prometheus metrics on port 9962 of
 each node
 (`prometheus.enabled`), which the kube-burner runner samples on a few workers

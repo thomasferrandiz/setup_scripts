@@ -245,6 +245,10 @@ locals {
             manifest = parse_yaml(
                 (directory / "rke2-cilium-config.yaml").read_text())
             apf = parse_yaml_documents((directory / "cilium-apf.yaml").read_text())
+            traefik_apf = parse_yaml_documents(
+                (directory / "traefik-apf.yaml").read_text())
+            traefik_config = parse_yaml(
+                (directory / "rke2-traefik-config.yaml").read_text())
             empty = directory / "empty.yaml"
             empty.write_text("cni: cilium\n")
             failed = subprocess.run(
@@ -279,6 +283,26 @@ locals {
         live = readme[readme.index("<<'EOF'\napiVersion: flowcontrol"):]
         live = live[len("<<'EOF'\n"):live.index("\nEOF\n")]
         self.assertEqual(parse_yaml_documents(live), apf)
+
+        level, schema = traefik_apf
+        self.assertEqual(level["metadata"]["name"], "traefik")
+        self.assertEqual(level["spec"]["limited"]["limitResponse"]["queuing"], {
+            "queues": 64, "handSize": 8, "queueLengthLimit": 500})
+        self.assertEqual(schema["spec"]["priorityLevelConfiguration"]["name"], "traefik")
+        self.assertLess(schema["spec"]["matchingPrecedence"], 900)
+        self.assertGreater(schema["spec"]["matchingPrecedence"], 100)
+        self.assertEqual(
+            [item["serviceAccount"] for item in schema["spec"]["rules"][0]["subjects"]],
+            [{"name": "rke2-traefik", "namespace": "kube-system"}])
+        section = readme[readme.index("#### API Priority and Fairness for traefik"):]
+        live = section[section.index("<<'EOF'\n") + len("<<'EOF'\n"):]
+        live = live[:live.index("\nEOF\n")]
+        self.assertEqual(parse_yaml_documents(live), traefik_apf)
+        self.assertEqual(traefik_config["kind"], "HelmChartConfig")
+        self.assertEqual(traefik_config["metadata"],
+                         {"name": "rke2-traefik", "namespace": "kube-system"})
+        self.assertEqual(parse_yaml(traefik_config["spec"]["valuesContent"]),
+                         {"updateStrategy": {"rollingUpdate": {"maxUnavailable": "10%"}}})
 
 
 if __name__ == "__main__":

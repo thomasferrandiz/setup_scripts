@@ -61,6 +61,20 @@ spec:
         - key: node.cloudprovider.kubernetes.io/uninitialized
           operator: Exists
 EOF
+  # The chart rolls the per-worker DaemonSet one pod at a time; at 10%, a
+  # rebalance restart of 1,000 pods takes minutes instead of hours.
+  cat > "$manifest_dir/rke2-traefik-config.yaml" <<'EOF'
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: rke2-traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    updateStrategy:
+      rollingUpdate:
+        maxUnavailable: 10%
+EOF
   # The suggested kube-system-service-accounts FlowSchema distinguishes flows
   # by namespace, so every kube-system agent shares one flow, limited to 6
   # queues of 50: Cilium's watch re-establishments got 429 queue-full. Leases
@@ -101,6 +115,54 @@ spec:
         - kind: ServiceAccount
           serviceAccount:
             name: cilium-operator
+            namespace: kube-system
+      resourceRules:
+        - verbs: ["*"]
+          apiGroups: ["*"]
+          resources: ["*"]
+          clusterScope: true
+          namespaces: ["*"]
+      nonResourceRules:
+        - verbs: ["*"]
+          nonResourceURLs: ["*"]
+EOF
+  # The rke2-traefik DaemonSet runs on every worker and watches about 20
+  # resources per pod; in kube-system-service-accounts its re-watches after
+  # force-closed Service watches got 429 queue-full. All pods share one
+  # ServiceAccount, hence one flow: the hand of 8 queues of 500 is what
+  # absorbs the burst.
+  cat > "$manifest_dir/traefik-apf.yaml" <<'EOF'
+apiVersion: flowcontrol.apiserver.k8s.io/v1
+kind: PriorityLevelConfiguration
+metadata:
+  name: traefik
+spec:
+  type: Limited
+  limited:
+    nominalConcurrencyShares: 20
+    lendablePercent: 50
+    limitResponse:
+      type: Queue
+      queuing:
+        queues: 64
+        handSize: 8
+        queueLengthLimit: 500
+---
+apiVersion: flowcontrol.apiserver.k8s.io/v1
+kind: FlowSchema
+metadata:
+  name: traefik
+spec:
+  priorityLevelConfiguration:
+    name: traefik
+  matchingPrecedence: 860
+  distinguisherMethod:
+    type: ByUser
+  rules:
+    - subjects:
+        - kind: ServiceAccount
+          serviceAccount:
+            name: rke2-traefik
             namespace: kube-system
       resourceRules:
         - verbs: ["*"]
