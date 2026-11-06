@@ -27,3 +27,4 @@ opentofu/harvester/.terraform.lock.hcl
 opentofu/harvester/bench.key
 opentofu/harvester/jump_host.key
 opentofu/harvester/.lb-addresses
+**/*.pyc
