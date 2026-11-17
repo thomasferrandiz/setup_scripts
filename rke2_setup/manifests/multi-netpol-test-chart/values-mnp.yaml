@@ -1,0 +1,6 @@
+# Values layered on top of the existing rke2-multus release values by
+# scripts/00-install-chart.sh. Everything not set here keeps the chart
+# defaults, so the suite exercises the chart as shipped. Override the
+# controller image etc. with CHART_VALUES or HELM_EXTRA_ARGS.
+multiNetworkPolicy:
+  enabled: true
