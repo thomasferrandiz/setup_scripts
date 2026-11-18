@@ -17,6 +17,8 @@ scripts differ. The attachments are rendered into `results/` with
 ```
 multi-netpol-test-chart/
 ├── values-mnp.yaml               # values layered on the release: enables multiNetworkPolicy
+├── multi-netpol-test-chart-plan.yaml # chart test plan (F13/F15/F24 below come from it)
+├── policies/                     # chart-kit-only fixtures (F24 NetworkPolicy)
 └── scripts/
     ├── lib.sh                       # shared helpers + helm/chart helpers
     ├── 00-install-chart.sh          # helm upgrade --install the chart under test
@@ -27,8 +29,11 @@ multi-netpol-test-chart/
     ├── 30-policytype-and-union-tests.sh # MNP-013..014
     ├── 35-lifecycle-tests.sh        # MNP-015..016
     ├── 40-isolation-tests.sh        # MNP-017
+    ├── 42-networkpolicy-coexistence-test.sh # F24, NetworkPolicy on eth0 + MultiNetworkPolicy
     ├── 45-node-recovery-tests.sh    # MNP-018
     ├── 50-custom-rule-test.sh       # MNP-020, through chart values
+    ├── 55-network-plugins-test.sh   # F13, networkPlugins, through chart values
+    ├── 60-icmp-test.sh              # F15, acceptICMP, through chart values
     ├── run-all.sh                   # runs everything above in order
     └── 90-cleanup.sh                # tears the test topology down (--all: roll the chart back)
 ```
@@ -122,8 +127,11 @@ NAD_TYPE=ipvlan ./run-all.sh /path/to/rke2-multus-<version>.tgz
 ./30-policytype-and-union-tests.sh
 ./35-lifecycle-tests.sh
 ./40-isolation-tests.sh
+./42-networkpolicy-coexistence-test.sh
 ./45-node-recovery-tests.sh
 ./50-custom-rule-test.sh   # reuses the tarball recorded by 00-install-chart.sh
+./55-network-plugins-test.sh   # idem
+./60-icmp-test.sh              # idem
 
 # Tear down the test topology (add --all to also roll the rke2-multus release back):
 ./90-cleanup.sh
@@ -166,6 +174,33 @@ helm upgrade and checks that the chart:
 It then runs the same traffic checks as the upstream suite and restores
 the previous value, checking that the ConfigMap and the rule file flags
 are removed when no custom rules remain.
+
+## Chart test plan cases (F13, F15, F24)
+
+These cases from [multi-netpol-test-chart-plan.yaml](multi-netpol-test-chart-plan.yaml)
+use the plan's IDs:
+
+* **F24** (`42-networkpolicy-coexistence-test.sh`): a Kubernetes
+  `NetworkPolicy` ([policies/np-f24-allow-client-b.yaml](policies/np-f24-allow-client-b.yaml))
+  allows only `app=client-b` to reach the server on eth0, while MNP-007 allows
+  only `app=client` on test-net-a. It checks every combination (neither, NetworkPolicy only,
+  both, MultiNetworkPolicy only). Each interface must follow its own policy.
+  This needs a primary CNI that enforces NetworkPolicy (canal, Cilium,
+  Calico).
+* **F13** (`55-network-plugins-test.sh`): removes `NAD_TYPE` from
+  `multiNetworkPolicy.networkPlugins` with a helm upgrade. If no plugin is
+  left, it uses `bridge`. It then applies the MNP-006 ingress deny-all policy. The controller logs
+  `Network type is not supported` and traffic stays allowed. After restoring
+  the list, the replaced controller pods enforce the existing policy. It
+  reuses the test attachments instead of a separate bridge NAD, which would
+  only connect pods on the same node.
+* **F15** (`60-icmp-test.sh`): under the MNP-006 ingress deny-all policy,
+  ping to the server succeeds and TCP is denied with `acceptICMP=true`
+  (`--accept-icmp`). With `acceptICMP=false`, both are denied.
+
+`55` and `60` restore the previous value on exit. The value is then stored
+as a user-supplied value on the release, at its effective value (usually the
+chart default). Use `90-cleanup.sh --all` to roll the release back.
 
 Results and generated files (discovered IPs, chart install state, values
 files) are written to `multi-netpol-test-chart/results/`. Keep

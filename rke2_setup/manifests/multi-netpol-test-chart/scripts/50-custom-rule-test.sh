@@ -24,10 +24,6 @@ template_checksum() {
   kubectl get daemonset -n "${CONTROLLER_NAMESPACE}" "${CONTROLLER_DAEMONSET}" -o json \
     | jq -r '.spec.template.metadata.annotations["checksum/custom-rules"] // ""'
 }
-controller_args() {
-  kubectl get daemonset -n "${CONTROLLER_NAMESPACE}" "${CONTROLLER_DAEMONSET}" \
-    -o jsonpath='{.spec.template.spec.containers[?(@.name=="'"${CONTROLLER_CONTAINER}"'")].args}'
-}
 
 # JSON is valid YAML, so jq-built files can be passed to helm with -f and
 # multi-line rules need no --set escaping.

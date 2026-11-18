@@ -1,0 +1,23 @@
+# F24: standard Kubernetes NetworkPolicy, enforced by the primary CNI on
+# eth0 only. Allows ingress to app=server on TCP 8080 only from app=client-b,
+# the opposite of MNP-007 on test-net-a (only app=client), so each policy's
+# effect is visible on its own interface.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: np-f24-allow-client-b
+  namespace: mnp-test-a
+spec:
+  podSelector:
+    matchLabels:
+      app: server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: client-b
+      ports:
+        - protocol: TCP
+          port: 8080

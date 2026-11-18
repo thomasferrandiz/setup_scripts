@@ -165,27 +165,45 @@ wait_reconcile() {
   if _wait_for_reconcile_confirmation "${ns}" "${name}" "${RECONCILE_TIMEOUT}"; then
     return
   fi
+  _force_resync "${ns}" "${name}"
+}
+
+# wait_controller_log NAMESPACE NAME MESSAGE SINCE
+# Like wait_reconcile, but waits for MESSAGE (a grep regex matched before the
+# policy name) logged since SINCE (RFC3339), e.g. for the log line of a
+# policy the controller ignores, or for the initial reconciliation by
+# controller pods replaced since SINCE.
+wait_controller_log() {
+  local ns="$1" name="$2" message="$3" since="$4"
+  if ! _wait_for_reconcile_confirmation "${ns}" "${name}" "${RECONCILE_TIMEOUT}" "${message}" "${since}"; then
+    _force_resync "${ns}" "${name}" "${message}"
+  fi
+}
+
+_force_resync() {
+  local ns="$1" name="$2" message="${3:-reconciled successfully}"
 
   info "WARNING: no confirmed reconciliation of ${ns}/${name} on one or more controller pods within ${RECONCILE_TIMEOUT}s; forcing a re-sync"
   kubectl annotate "multi-networkpolicies.k8s.cni.cncf.io" -n "${ns}" "${name}" \
     "mnp-test/force-resync=$(date +%s)" --overwrite >/dev/null 2>&1 || true
 
-  if ! _wait_for_reconcile_confirmation "${ns}" "${name}" "${RECONCILE_TIMEOUT}"; then
+  if ! _wait_for_reconcile_confirmation "${ns}" "${name}" "${RECONCILE_TIMEOUT}" "${message}"; then
     info "WARNING: still no confirmation for ${ns}/${name} after forced re-sync; continuing anyway (results below may reflect this)"
   fi
 }
 
-# _wait_for_reconcile_confirmation NAMESPACE NAME TIMEOUT
-# Returns 0 once every controller pod has logged a successful reconcile for
-# NAMESPACE/NAME since this function started polling.
+# _wait_for_reconcile_confirmation NAMESPACE NAME TIMEOUT [MESSAGE [SINCE]]
+# Returns 0 once every controller pod has logged MESSAGE (default: a
+# successful reconcile) for NAMESPACE/NAME since SINCE (default: when this
+# function started polling).
 _wait_for_reconcile_confirmation() {
-  local ns="$1" name="$2" timeout="$3"
-  local start_ts elapsed=0
-  start_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  local ns="$1" name="$2" timeout="$3" message="${4:-reconciled successfully}"
+  local start_ts="${5:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" elapsed=0
 
   local pods
-  pods="$(kubectl -n "${CONTROLLER_NAMESPACE}" get pods -l "${CONTROLLER_LABEL_SELECTOR}" \
-    -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)"
+  # Skip pods still terminating after a rollout: they never log the message.
+  pods="$(kubectl -n "${CONTROLLER_NAMESPACE}" get pods -l "${CONTROLLER_LABEL_SELECTOR}" -o json 2>/dev/null \
+    | jq -r '[.items[] | select(.metadata.deletionTimestamp == null) | .metadata.name] | join(" ")')"
   if [[ -z "${pods}" ]]; then
     info "could not find controller pods (label ${CONTROLLER_LABEL_SELECTOR} in ${CONTROLLER_NAMESPACE}); falling back to ${RECONCILE_WAIT}s sleep"
     sleep "${RECONCILE_WAIT}"
@@ -198,13 +216,13 @@ _wait_for_reconcile_confirmation() {
     for pod in ${pods}; do
       if ! kubectl -n "${CONTROLLER_NAMESPACE}" logs "${pod}" -c "${CONTROLLER_CONTAINER}" \
           --since-time="${start_ts}" 2>/dev/null \
-          | grep -q "reconciled successfully.*\"name\": \"${name}\""; then
+          | grep -q "${message}.*\"name\": \"${name}\""; then
         all_confirmed=false
         break
       fi
     done
     if [[ "${all_confirmed}" == true ]]; then
-      info "confirmed reconciliation of ${ns}/${name} on all controller pods"
+      info "confirmed '${message}' for ${ns}/${name} on all controller pods"
       sleep "${RECONCILE_SETTLE_WAIT}" # allow the nftables transaction to fully settle
       return 0
     fi
@@ -249,6 +267,20 @@ udp_check() {
     timeout "${CONNECT_TIMEOUT}" sh -c "printf ping | nc -u -w ${CONNECT_TIMEOUT} ${ip} ${port}" \
     2>/dev/null | tr -d '[:space:]')"
   if [[ "${reply}" == "ok" ]]; then
+    echo "allow"
+  else
+    echo "deny"
+  fi
+}
+
+# icmp_check FROM_NS FROM_POD DEST_IP
+# Returns "allow" if a single ping gets a reply within CONNECT_TIMEOUT
+# seconds, "deny" otherwise.
+icmp_check() {
+  local from_ns="$1" from_pod="$2" ip="$3"
+  if kubectl exec -n "${from_ns}" "${from_pod}" -- \
+      timeout "$((CONNECT_TIMEOUT + 1))" ping -c 1 -W "${CONNECT_TIMEOUT}" "${ip}" \
+      >/dev/null 2>&1; then
     echo "allow"
   else
     echo "deny"
@@ -363,4 +395,31 @@ helm_upgrade_chart() {
 # replaced because a values change altered the pod template.
 wait_controller_rollout() {
   kubectl rollout status -n "${CONTROLLER_NAMESPACE}" "daemonset/${CONTROLLER_DAEMONSET}" --timeout=180s
+}
+
+# controller_args
+# Prints the controller container args of the DaemonSet pod template (JSON array).
+controller_args() {
+  kubectl get daemonset -n "${CONTROLLER_NAMESPACE}" "${CONTROLLER_DAEMONSET}" \
+    -o jsonpath='{.spec.template.spec.containers[?(@.name=="'"${CONTROLLER_CONTAINER}"'")].args}'
+}
+
+# mnp_value KEY
+# Prints multiNetworkPolicy.KEY as deployed (user values merged with the
+# chart defaults), as compact JSON.
+mnp_value() {
+  helm get values "${HELM_RELEASE}" -n "${HELM_NAMESPACE}" --all -o json \
+    | jq -c --arg k "$1" '.multiNetworkPolicy[$k]'
+}
+
+# set_mnp_value KEY JSON_VALUE
+# Upgrades the release with the chart under test (CHART_TGZ, see
+# load_chart_state) and multiNetworkPolicy.KEY=JSON_VALUE, then waits for
+# the controller rollout. Values are passed as a JSON file so lists need no
+# --set escaping.
+set_mnp_value() {
+  local key="$1" value="$2" file="${RESULTS_DIR}/mnp-${1}-values.json"
+  jq -n --arg k "${key}" --argjson v "${value}" '{multiNetworkPolicy: {($k): $v}}' > "${file}"
+  info "helm upgrade with multiNetworkPolicy.${key}=${value}"
+  helm_upgrade_chart "${CHART_TGZ}" -f "${file}" >/dev/null && wait_controller_rollout >/dev/null
 }

@@ -41,8 +41,11 @@ run_stage "25-egress-tests.sh"
 run_stage "30-policytype-and-union-tests.sh"
 run_stage "35-lifecycle-tests.sh"
 run_stage "40-isolation-tests.sh"
+run_stage "42-networkpolicy-coexistence-test.sh"
 run_stage "45-node-recovery-tests.sh"
 run_stage "50-custom-rule-test.sh"
+run_stage "55-network-plugins-test.sh"
+run_stage "60-icmp-test.sh"
 
 echo
 echo "################################################################"
