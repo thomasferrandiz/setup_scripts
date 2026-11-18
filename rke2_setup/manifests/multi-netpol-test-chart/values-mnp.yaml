@@ -4,3 +4,7 @@
 # controller image etc. with CHART_VALUES or HELM_EXTRA_ARGS.
 multiNetworkPolicy:
   enabled: true
+# The test attachments use whereabouts IPAM, which the chart does not
+# install by default.
+rke2-whereabouts:
+  enabled: true

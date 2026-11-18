@@ -6,9 +6,32 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
-log "Applying namespaces, NetworkAttachmentDefinitions, and workloads"
+attachments_file="${RESULTS_DIR}/01-network-attachments.yaml"
+render_network_attachments "${attachments_file}"
+
+network_plugins="$(kubectl get daemonset -n "${CONTROLLER_NAMESPACE}" "${CONTROLLER_DAEMONSET}" -o json 2>/dev/null \
+  | jq -r '.spec.template.spec.containers[].args[]? | select(startswith("--network-plugins=")) | ltrimstr("--network-plugins=")' \
+  | head -n 1)"
+if [[ -n "${network_plugins}" && ",${network_plugins}," != *",${NAD_TYPE},"* ]]; then
+  echo "ERROR: the controller only enforces '${network_plugins}' (--network-plugins), not ${NAD_TYPE}. Add it to multiNetworkPolicy.networkPlugins." >&2
+  exit 1
+fi
+
+nad_configs() {
+  kubectl get network-attachment-definitions.k8s.cni.cncf.io -n mnp-test-a -o json 2>/dev/null \
+    | jq -c '[.items[] | {name: .metadata.name, config: .spec.config}] | sort_by(.name)' || true
+}
+
+log "Applying namespaces, NetworkAttachmentDefinitions (${NAD_TYPE} on ${NAD_MASTER}), and workloads"
 kubectl apply -f "${SHARED_DIR}/00-namespaces.yaml"
-kubectl apply -f "${SHARED_DIR}/01-network-attachments.yaml"
+previous_nads="$(nad_configs)"
+kubectl apply -f "${attachments_file}"
+if [[ -n "${previous_nads}" && "${previous_nads}" != "[]" && "${previous_nads}" != "$(nad_configs)" ]]; then
+  # Pods keep the interfaces they were created with; recreate them on the new attachments.
+  log "Attachments changed; recreating the test pods"
+  kubectl delete pod --all -n mnp-test-a --wait=true
+  kubectl delete pod --all -n mnp-test-b --wait=true
+fi
 kubectl apply -f "${SHARED_DIR}/02-workloads.yaml"
 
 log "Waiting for pods to become Ready"
@@ -42,6 +65,7 @@ CLIENT_B_IP_A=${CLIENT_B_IP_A}
 CLIENT_OTHERNS_IP_A=${CLIENT_OTHERNS_IP_A}
 TESTNET_A_CIDR=192.168.101.0/24
 TESTNET_B_CIDR=192.168.102.0/24
+NAD_TYPE=${NAD_TYPE}
 EOF
 
 log "Topology ready"

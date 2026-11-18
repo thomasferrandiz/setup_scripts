@@ -9,7 +9,8 @@ but against the multi-networkpolicy-nftables controller deployed by an
 The topology manifests and MultiNetworkPolicy fixtures are shared with
 [multi-netpol-test](../multi-netpol-test/) (`00-namespaces.yaml`,
 `01-network-attachments.yaml`, `02-workloads.yaml`, `policies/`); only the
-scripts differ.
+scripts differ. The attachments are rendered into `results/` with
+`NAD_TYPE`/`NAD_MASTER` applied (see below).
 
 ## Layout
 
@@ -36,6 +37,30 @@ multi-netpol-test-chart/
 
 Everything listed in [multi-netpol-test](../multi-netpol-test/README.md#prerequisites), plus:
 
+* `kernel-default` on every worker that runs test pods (control-plane
+  nodes tainted `CriticalAddonsOnly` don't run them). The `macvlan` and
+  `ipvlan` kernel modules used by the test attachments are only in
+  `kernel-default`. Minimal openSUSE/SLES images, such as the
+  `opensuse-156-minimal` image of the Harvester bench VMs
+  ([opentofu/harvester](../../../opentofu/harvester/)), ship
+  `kernel-default-base` instead, so the test pods stay in
+  `ContainerCreating` with `failed to create macvlan: operation not
+  supported` (`failed to create ipvlan` with `NAD_TYPE=ipvlan`). On each
+  worker, one at a time:
+
+  ```sh
+  sudo zypper --non-interactive install kernel-default   # keeps kernel-default-base
+  sudo reboot
+  # once the node is Ready again:
+  sudo modprobe macvlan && sudo modprobe ipvlan && lsmod | grep -E '^(macvlan|ipvlan) '
+  ```
+
+  The reboot restarts every pod on the node. Recreate pods that failed
+  before the fix with `./90-cleanup.sh` and `./10-deploy-topology.sh`.
+* If the node interface is not `eth0`, set `NAD_MASTER` instead of editing
+  the shared `01-network-attachments.yaml`.
+* whereabouts IPAM: `values-mnp.yaml` enables the chart's
+  `rke2-whereabouts` subchart, so the kit installs it.
 * `helm` (v3.14+ or v4, for `--reset-then-reuse-values`) on the machine
   running the scripts, with a kubeconfig allowed to manage releases in
   `kube-system`.
@@ -85,6 +110,9 @@ cd rke2_setup/manifests/multi-netpol-test-chart/scripts
 # One-shot, full suite:
 ./run-all.sh /path/to/rke2-multus-<version>.tgz
 
+# With ipvlan attachments instead of macvlan:
+NAD_TYPE=ipvlan ./run-all.sh /path/to/rke2-multus-<version>.tgz
+
 # Or step by step:
 ./00-install-chart.sh /path/to/rke2-multus-<version>.tgz
 ./10-deploy-topology.sh
@@ -119,6 +147,8 @@ Environment variables, in addition to the `RECONCILE_*`,
 | `CHART_VALUES` | `../values-mnp.yaml` | Values file layered on the release by every helm upgrade. |
 | `HELM_EXTRA_ARGS` | (empty) | Extra helm arguments (word-split) for every upgrade, e.g. image overrides. |
 | `CONTROLLER_LABEL_SELECTOR` | `app=rke2-multus-mnp` | Label selector used to find controller pods. |
+| `NAD_TYPE` | `macvlan` | CNI plugin of `test-net-a`/`test-net-b`: `macvlan` (bridge mode) or `ipvlan` (L2 mode). Must be in the controller's `multiNetworkPolicy.networkPlugins` (both are by default); `10-deploy-topology.sh` checks it and recreates the test pods when the attachments change. A node interface cannot hold macvlan and ipvlan sub-interfaces at once (`device or resource busy`), so other pods using the other type on the same nodes block the switch. |
+| `NAD_MASTER` | `eth0` | Node interface the attachments are created on. |
 
 ## MNP-020 custom rules through chart values
 

@@ -22,6 +22,19 @@ HELM_RELEASE="${HELM_RELEASE:-rke2-multus}"
 HELM_NAMESPACE="${HELM_NAMESPACE:-kube-system}"
 CHART_VALUES="${CHART_VALUES:-${ROOT_DIR}/values-mnp.yaml}"
 
+# CNI plugin of the test-net-a/test-net-b attachments. A node interface
+# cannot hold macvlan and ipvlan sub-interfaces at the same time.
+NAD_TYPE="${NAD_TYPE:-macvlan}"
+NAD_MASTER="${NAD_MASTER:-eth0}"   # node interface the attachments are created on
+if [[ ! "${NAD_TYPE}" =~ ^(macvlan|ipvlan)$ ]]; then
+  echo "ERROR: NAD_TYPE must be macvlan or ipvlan (got '${NAD_TYPE}')" >&2
+  exit 1
+fi
+if [[ ! "${NAD_MASTER}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "ERROR: NAD_MASTER is not a valid interface name: '${NAD_MASTER}'" >&2
+  exit 1
+fi
+
 RECONCILE_WAIT="${RECONCILE_WAIT:-8}"   # fallback fixed sleep when a policy name isn't given to wait_reconcile
 CONNECT_TIMEOUT="${CONNECT_TIMEOUT:-3}" # seconds for a single connect attempt
 CHECK_RETRIES="${CHECK_RETRIES:-3}"     # repeat each flow check this many times
@@ -277,6 +290,25 @@ repeat_check() {
     fi
   done
   echo "${first}"
+}
+
+# render_network_attachments OUTPUT_FILE
+# Writes the shared macvlan attachments with NAD_TYPE and NAD_MASTER applied.
+render_network_attachments() {
+  local output="$1"
+  local -a substitutions=(-e "s|\"master\": \"eth0\"|\"master\": \"${NAD_MASTER}\"|")
+  if [[ "${NAD_TYPE}" == ipvlan ]]; then
+    substitutions+=(-e 's|"type": "macvlan"|"type": "ipvlan"|' -e 's|"mode": "bridge"|"mode": "l2"|')
+  fi
+  sed "${substitutions[@]}" "${SHARED_DIR}/01-network-attachments.yaml" > "${output}"
+  # Fail if the shared manifest changed so that a substitution no longer applies.
+  local field
+  for field in "\"type\": \"${NAD_TYPE}\"" "\"master\": \"${NAD_MASTER}\""; do
+    if [[ "$(grep -c -F "${field}" "${output}")" -ne 2 ]]; then
+      echo "ERROR: could not set ${field} on both attachments in ${output}" >&2
+      return 1
+    fi
+  done
 }
 
 load_topology() {
