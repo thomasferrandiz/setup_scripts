@@ -390,6 +390,15 @@ helm_upgrade_chart() {
     "$@" ${HELM_EXTRA_ARGS:-}
 }
 
+# chart_default SECTION KEY
+# Prints a top-level SECTION's image KEY from the chart's default values
+# (CHART_TGZ), e.g. chart_default multiNetworkPolicy primeTag.
+chart_default() {
+  helm show values "${CHART_TGZ}" | awk -v sec="$1" -v key="$2" '
+    /^[^ #]/ { in_sec = ($0 ~ "^" sec ":") }
+    in_sec && $1 == key ":" { gsub(/"/, "", $2); print $2; exit }'
+}
+
 # wait_controller_rollout
 # Waits for the controller DaemonSet to finish rolling out, including pods
 # replaced because a values change altered the pod template.

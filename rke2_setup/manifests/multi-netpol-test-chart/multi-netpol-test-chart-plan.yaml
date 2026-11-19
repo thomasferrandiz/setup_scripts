@@ -1,0 +1,207 @@
+# Test Plan: rke2-multus `multiNetworkPolicy` (multi-networkpolicy-nftables)
+
+Branch: `multi-netpol-nft` (commits df2caff9, d2484277, dd3dfd9d, ecc46aeb)
+
+## 1. Scope
+
+In scope:
+
+- The new optional `multiNetworkPolicy` component in `packages/rke2-multus` (`templates/multiNetworkPolicy.yaml`, `values.yaml`, `_helpers.tpl`), which consists of:
+  - the DaemonSet `<release>-mnp`, the ServiceAccount, ClusterRole, and ClusterRoleBinding `rke2-multus-mnp`, and the optional ConfigMap `<release>-mnp-custom-rules`
+  - the MultiNetworkPolicy CRD (`k8s.cni.cncf.io/v1beta1`), shipped by `rke2-multus-crd`
+- The new `rke2-multus.image` helper. By default it uses the mirrored `repository`/`tag`; when `global.prime.enabled=true` it uses `primeRepository`/`primeTag`. Both the mnp DaemonSet and the dynamic networks controller use it.
+- The dynamic networks controller (DNC) default image, which switches from the hardened image to the mirrored image. Prime installs keep the hardened image.
+- updatecli changes: the new sources `multi_networkpolicy`, `mirrored_multi_networkpolicy`, and `mirrored_network_controller`, and the new `set_section_value` function in `update-multus.sh`.
+
+Out of scope:
+
+- Upstream controller logic, beyond smoke and functional coverage.
+- `rke2-multus-1.34-1.36`. This package is not modified, but section 9 includes a regression check for it.
+
+## 2. Test environments
+
+| ID | Setup | Purpose |
+|----|-------|---------|
+| E1 | Latest RKE2 with `cni: [multus, canal]`, one server and two agents, IPv4 | Main functional test matrix |
+| E2 | RKE2 with `cni: [multus, cilium]` | Interoperability with a primary CNI that also uses nftables/eBPF |
+| E3 | RKE2 with `cni: [multus, calico]`, dual-stack | IPv6, ICMPv6, and IPv6 custom rules |
+| E4 | RKE2 with `system-default-registry` pointing to a private or air-gapped registry, Prime enabled | Prime image path |
+| E5 | Mixed cluster with Linux and Windows agents (if available) | Verify the `nodeSelector kubernetes.io/os: linux` |
+| E6 | SLES/SLE Micro and Ubuntu nodes | Host nftables kernel modules and SELinux (`selinux: true`) |
+
+To enable the feature, apply this HelmChartConfig:
+
+```yaml
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: rke2-multus
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    multiNetworkPolicy:
+      enabled: true
+```
+
+## 3. Static and render tests (no cluster required)
+
+First run `make prepare PACKAGE=rke2-multus`, or render a copy of the chart with the `rke2-whereabouts` dependency removed. Then run `helm template t . -n kube-system [flags]` for each case below.
+
+| # | Values | Expected result |
+|---|--------|-----------------|
+| R1 | Defaults | No `mnp` objects are rendered. Apart from the DNC image change, the existing manifests are byte-identical to `main-source`. |
+| R2 | `multiNetworkPolicy.enabled=true` | The ServiceAccount, ClusterRole, ClusterRoleBinding, and DaemonSet are rendered. There is no ConfigMap and no `checksum/custom-rules` annotation. The image is `rancher/mirrored-k8snetworkplumbingwg-multi-networkpolicy-nftables:v0.1.0`. The args include `--zap-log-level=info`, `--network-plugins=macvlan,ipvlan`, `--accept-icmp`, `--accept-icmpv6`, and `--host-prefix=/host`. |
+| R3 | R2 plus `global.prime.enabled=true` and `global.systemDefaultRegistry=reg.io` | The image is `reg.io/rancher/hardened-multi-networkpolicy-nftables:v0.1.0-build20261012`. If the DNC is enabled, it uses `reg.io/rancher/hardened-multus-dynamic-networks-controller:...`. |
+| R4 | R3 with `multiNetworkPolicy.image.primeTag=null` | Rendering fails with `multiNetworkPolicy.image.primeTag is required when global.prime.enabled=true`. |
+| R5 | R2 with `multiNetworkPolicy.image.tag=null` | Rendering fails with `multiNetworkPolicy.image.repository/tag is required`. |
+| R6 | R2 with only `customRules.ingress.v4="tcp dport 9999 accept"` set | The ConfigMap contains only `custom-v4-ingress-rules.txt`, and only the `--custom-v4-ingress-rule-file` arg is present. The volume, the volume mount, and the checksum annotation are all present. |
+| R7 | All four custom rule fields set, with multi-line values | The ConfigMap has four keys and the container has four args. Multi-line content is indented correctly; validate it with `kubectl apply --dry-run=server`. |
+| R8 | Only `customRules.egress.v6` set | `$hasCustomRules` evaluates to true, and the ConfigMap and volume are rendered. This covers the `or` across all four fields. |
+| R9 | `customRules: null` or `customRules.ingress: null` | Rendering succeeds without a nil-pointer error. |
+| R10 | Change the value of a custom rule | The `checksum/custom-rules` annotation value changes. |
+| R11 | `acceptICMP=false` and `acceptICMPv6=false` | The corresponding flags are absent. |
+| R12 | `networkPlugins=[macvlan]`, `logLevel=debug`, `extraArgs=["--foo=bar baz"]` | The args contain `--network-plugins=macvlan`, `--zap-log-level=debug`, and `"--foo=bar baz"` (quoted). |
+| R13 | `logLevel=""` | The log level falls back to `info`. |
+| R14 | `pod.resources.enabled=true` | The mnp container gets requests of 100m CPU / 80Mi memory and limits of 100m CPU / 150Mi memory. |
+| R15 | `imagePullSecrets=[{name: s}]` and custom `tolerations` | Both are propagated to the mnp DaemonSet. |
+| R16 | R2 plus `manifests.clusterRole=false` | **Observed:** the mnp ClusterRole is dropped, but the ClusterRoleBinding is still rendered and references a role that does not exist. We need to decide whether mnp RBAC should be coupled to the multus `manifests.*` flags. If it should, document this; if not, gate the RBAC on `multiNetworkPolicy.enabled` only. |
+| R17 | R2 plus `manifests.serviceAccount=false` | The DaemonSet references the ServiceAccount `rke2-multus-mnp`, which is not created, so pod creation fails. This needs the same decision as R16. |
+| R18 | A release name other than `rke2-multus` | The DaemonSet and ConfigMap use the release name, while the ServiceAccount, ClusterRole, and ClusterRoleBinding use the chart name. The selector `app: rke2-multus-mnp` still matches the pod labels. |
+| R19 | Run `kubeconform` or `kubectl --dry-run=server` on every render | All manifests are schema-valid. |
+| R20 | `make validate` and the CI `pull-request.yaml` workflow | Both pass, and `rke2-multus-crd` contains the `multi-networkpolicies.k8s.cni.cncf.io` CRD. |
+
+## 4. Install and lifecycle tests (E1)
+
+| # | Step | Expected result |
+|---|------|-----------------|
+| L1 | Fresh install with the feature enabled | The `rke2-multus-mnp` DaemonSet is Ready on every Linux node. Its pods use the `system-node-critical` priority class and host networking. The logs contain no RBAC `forbidden` errors. |
+| L2 | Run `kubectl get crd multi-networkpolicies.k8s.cni.cncf.io` | The CRD exists and was installed by `rke2-multus-crd`. It is present even when the feature is disabled. |
+| L3 | Enable the feature on a running cluster where it was disabled | The DaemonSet rolls out and existing pods are not restarted. Once policies are created, they apply to existing pods. |
+| L4 | Disable the feature (`enabled=false`) | The DaemonSet, RBAC objects, and ConfigMap are removed. **Check whether nftables rules remain in pod network namespaces after the controller is removed**, and document the result, because stale deny rules are a risk. |
+| L5 | Upgrade from the previously released rke2-multus chart (with the feature disabled) to this version | Multus pods restart only where expected. Because of the DNC image change, the DNC rolls out only if it is enabled. |
+| L6 | Upgrade RKE2 to the next minor version with the feature enabled | The DaemonSet survives the upgrade and policies remain enforced. |
+| L7 | Edit the custom rules through the HelmChartConfig | Pods roll out one node at a time (`maxUnavailable: 1`), and the new rules appear in `nft list ruleset`. |
+| L8 | Kill the mnp pod on a node | After restarting, the pod reconciles and the rules match their state before the restart. Record whether traffic was allowed or blocked while the pod was down. |
+| L9 | Reboot a node | Once the mnp pod is running again, policies are restored for the pods on that node. |
+| L10 | Cluster with a Windows node (E5) | No mnp pod is scheduled on the Windows node. |
+| L11 | Node that is cordoned or tainted (NoSchedule/NoExecute) | The DaemonSet still runs on it, thanks to the default tolerations. |
+| L12 | Measure resource usage at idle and with 50 policies across 100 pods | Memory stays under the 150Mi limit with no OOMKill. Check for CPU throttling at the 100m limit during reconciliation. |
+
+## 5. Functional policy tests
+
+Common fixtures (E1):
+
+- A macvlan NetworkAttachmentDefinition (NAD) and an ipvlan NAD on a secondary host NIC (or a dummy or bridge interface), using static or whereabouts IPAM.
+- Two namespaces, `ns-a` and `ns-b`.
+- Three pods attached to the NAD: `server` (listening on TCP 8080 and UDP 9090), `client-allowed`, and `client-denied`.
+
+```yaml
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: macvlan-net
+  namespace: ns-a
+spec:
+  config: '{"cniVersion":"0.3.1","type":"macvlan","master":"eth1","mode":"bridge",
+            "ipam":{"type":"whereabouts","range":"192.168.100.0/24"}}'
+---
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: allow-client
+  namespace: ns-a
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: ns-a/macvlan-net
+spec:
+  podSelector:
+    matchLabels: {app: server}
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels: {role: allowed}
+    ports:
+    - {protocol: TCP, port: 8080}
+```
+
+To verify each case, test connectivity to the secondary IP with `nc`, `curl`, or `ping`, and inspect the rules on the node with `nsenter -t <pod-pid> -n nft list ruleset`.
+
+| # | Case | Expected result |
+|---|------|-----------------|
+| F1 | No policy | All traffic on the secondary interface is allowed. |
+| F2 | Default-deny ingress (`podSelector: {}`, `policyTypes: [Ingress]`, no rules) | All ingress to the selected pods on net1 is dropped. Traffic on the primary interface (eth0) is not affected. |
+| F3 | Default-deny egress | Egress on net1 is dropped. Egress on eth0 (DNS, API server) still works. |
+| F4 | Allow by `podSelector` | `client-allowed` can reach port 8080; `client-denied` cannot. |
+| F5 | Allow by `namespaceSelector` (cross-namespace, with the NAD reachable from ns-b) | Only pods from the labelled namespace are allowed. |
+| F6 | Allow by `ipBlock` with `except` | The CIDR is allowed and the except range is denied. Test with an external host on the same L2 segment. |
+| F7 | Ports and protocols (TCP vs. UDP, named ports, `endPort` ranges) | Only the listed ports and protocols are allowed. |
+| F8 | Egress policy to an `ipBlock` | Only the allowed destinations are reachable. |
+| F9 | Combined ingress and egress policy | Each direction is enforced independently. |
+| F10 | Multiple policies selecting the same pod | The allowed traffic is the union of all policies (allows are additive). |
+| F11 | `policy-for` pointing at a different NAD | The policy does not affect this NAD's interface. |
+| F12 | Pod with two secondary interfaces (macvlan and ipvlan) and a policy for only one of them | Only the targeted interface is filtered. |
+| F13 | NAD of a type not listed in `networkPlugins` (for example, bridge) | The policy is ignored and traffic is allowed. After adding `bridge` to `networkPlugins`, the policy is enforced. |
+| F14 | ipvlan NAD | Results match F2–F8. |
+| F15 | ICMP under default-deny with `acceptICMP=true` | Ping succeeds. With `acceptICMP=false`, ping fails. |
+| F16 | ICMPv6 and IPv6 (E3) with `acceptICMPv6` | Under default-deny, neighbour discovery still works, so IPv6 connectivity is not broken. Document the behaviour with `acceptICMPv6=false`. |
+| F17 | Custom IPv4 ingress rule `tcp dport 9999 accept` under default-deny | Port 9999 is reachable and other ports are blocked. The rule is visible in the ingress chain. |
+| F18 | Custom IPv4 egress rule `ip daddr X accept` | Egress to X is allowed despite default-deny. |
+| F19 | Custom IPv6 ingress and egress rules (E3) | The rules are applied only in the IPv6 chains. |
+| F20 | Invalid nft syntax in a custom rule | The controller logs a clear error. Check whether it crash-loops or skips the rule, and document the result. |
+| F21 | Dynamic changes: add, edit, and delete a policy; relabel a pod; relabel a namespace | Rules update within a few seconds without any pod restart. Deleting the policy restores unrestricted traffic. |
+| F22 | Scale the server deployment and restart its pods (so whereabouts assigns new IPs) | The peers' rules pick up the new IPs. |
+| F23 | Server and client pods on different nodes | Policies are enforced across nodes. |
+| F24 | A standard Kubernetes `NetworkPolicy` on eth0 alongside a MultiNetworkPolicy | Each policy applies only to its own interface, and neither interferes with the canal, Cilium, or Calico rules. |
+| F25 | A policy that selects a hostNetwork pod | The policy is ignored and host networking is not affected. `nft list ruleset` on the host shows no changes outside pod network namespaces. |
+
+## 6. Interoperability
+
+| # | Case | Expected result |
+|---|------|-----------------|
+| I1 | `thickPlugin.enabled=true` together with mnp | Policies are enforced, and the controller finds the pod network status through the runtime endpoint. |
+| I2 | `dynamicNetworksController.enabled=true`, then hot-plug net1 into a running pod | The policy is applied to the newly added interface. Hot-unplugging the interface removes its rules. |
+| I3 | `rke2-whereabouts.enabled=true` | IPs are resolved from the network-status annotation. |
+| I4 | Primary CNI matrix (E1, E2, E3) | F2, F4, and F24 pass in each environment. |
+| I5 | SELinux in enforcing mode (E6) | The pod starts and reads the containerd socket through `/host`, with no AVC denials. |
+| I6 | Non-default containerd socket (custom `containerRuntimeEndpoint`) | The controller works when the path is set correctly. An incorrect path produces a clear error in the logs. |
+
+## 7. Prime, registry, and air-gap (E4)
+
+| # | Case | Expected result |
+|---|------|-----------------|
+| P1 | `global.prime.enabled=true` through RKE2 Prime | The hardened mnp and DNC images are pulled from `systemDefaultRegistry`. |
+| P2 | Air-gap image tarball and the `rke2-images` list | The mirrored and hardened mnp images, and the mirrored DNC image, are included in the RKE2 image lists. **This needs coordination with the rke2 repo.** |
+| P3 | `imagePullSecrets` with a private registry | mnp pods pull their images successfully. |
+| P4 | Image architectures | Both images are available for amd64 and arm64. Run L1 on an arm64 node. |
+| P5 | CIS and vulnerability scan of the hardened image | No critical CVEs. The binary is at `/multi-networkpolicy-nftables` in both the mirrored and hardened images, because the `command` path must match. |
+
+## 8. updatecli
+
+Run `updatecli diff` locally against a fork, with `GITHUB_TOKEN` set.
+
+| # | Case | Expected result |
+|---|------|-----------------|
+| U1 | A new `image-build-multi-networkpolicy-nftables` release | Only `multiNetworkPolicy.image.primeTag` changes, and `packageVersion` is bumped once. |
+| U2 | A new mirrored mnp tag on Docker Hub | Only `multiNetworkPolicy.image.tag` changes. Architecture-suffixed tags are ignored by `tagfilter`. |
+| U3 | A mirrored DNC tag update | Only `dynamicNetworksController.image.tag` in `rke2-multus` changes. |
+| U4 | A hardened DNC update | Both the `primeTag` in `rke2-multus` and the `tag` in `rke2-multus-1.34-1.36` are updated, and each package is bumped once. |
+| U5 | mnp and DNC use the same tag string | `set_section_value` modifies only the targeted section. Confirm that other images and comment lines are not edited. |
+| U6 | Several sources change in the same run | `packageVersion` is incremented exactly once per package (the `bump_package` guard). The multus-version branch respects `new_package`. |
+| U7 | Nothing has changed | The script does nothing and no PR is opened. |
+| U8 | A source is unavailable (for example, the repo has no release yet) | Document whether updatecli fails the source or produces an empty environment variable. `create-issue.sh` reports the error. |
+| U9 | `packageVersion` is 08 or 09 | It is bumped to 09 or 10 without an octal parsing error (thanks to the `10#` prefix). |
+
+## 9. Regression
+
+- With the feature disabled, a default install on E1 behaves exactly like `main-source` for multus, whereabouts, and the DNC.
+- The DNC works with its new default mirrored image (hot-plug smoke test).
+- The `rke2-multus-1.34-1.36` chart renders unchanged.
+- The existing RKE2 multus end-to-end tests (in the rke2 repo's `tests/` directory) pass.
+
+## 10. Exit criteria
+
+- R1–R20 pass, with R16 and R17 either fixed or documented as intended behaviour.
+- L1–L12 and F1–F25 pass on E1, and F2, F4, and F24 pass on E2 and E3.
+- P1–P5 pass, and the images are included in the RKE2 air-gap image lists.
+- U1–U9 are verified on a fork.
+- The open behaviours (stale rules in L4, the enforcement gap in L8, invalid rules in F20, and U8) are documented in the chart README, the values comments, or the RKE2 docs.

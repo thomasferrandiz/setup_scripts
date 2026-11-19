@@ -33,6 +33,7 @@ if [[ "${SKIP_INSTALL:-0}" != "1" ]]; then
     exit 1
   fi
 fi
+run_stage "05-prime-render-test.sh"
 [[ "${SKIP_TOPOLOGY:-0}" == "1" ]] || run_stage "10-deploy-topology.sh"
 
 run_stage "15-admission-tests.sh"
@@ -46,6 +47,7 @@ run_stage "45-node-recovery-tests.sh"
 run_stage "50-custom-rule-test.sh"
 run_stage "55-network-plugins-test.sh"
 run_stage "60-icmp-test.sh"
+run_stage "65-prime-images-test.sh"
 
 echo
 echo "################################################################"

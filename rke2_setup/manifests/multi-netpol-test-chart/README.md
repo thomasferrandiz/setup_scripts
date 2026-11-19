@@ -22,6 +22,7 @@ multi-netpol-test-chart/
 └── scripts/
     ├── lib.sh                       # shared helpers + helm/chart helpers
     ├── 00-install-chart.sh          # helm upgrade --install the chart under test
+    ├── 05-prime-render-test.sh      # P1, Prime image rendering (helm template only)
     ├── 10-deploy-topology.sh        # deploy namespaces/attachments/pods, discover IPs
     ├── 15-admission-tests.sh        # MNP-001..004 (CRD schema/admission)
     ├── 20-ingress-tests.sh          # MNP-005..010 (ingress enforcement)
@@ -34,6 +35,7 @@ multi-netpol-test-chart/
     ├── 50-custom-rule-test.sh       # MNP-020, through chart values
     ├── 55-network-plugins-test.sh   # F13, networkPlugins, through chart values
     ├── 60-icmp-test.sh              # F15, acceptICMP, through chart values
+    ├── 65-prime-images-test.sh      # P1, Prime images pulled from systemDefaultRegistry
     ├── run-all.sh                   # runs everything above in order
     └── 90-cleanup.sh                # tears the test topology down (--all: roll the chart back)
 ```
@@ -120,6 +122,7 @@ NAD_TYPE=ipvlan ./run-all.sh /path/to/rke2-multus-<version>.tgz
 
 # Or step by step:
 ./00-install-chart.sh /path/to/rke2-multus-<version>.tgz
+./05-prime-render-test.sh  # no cluster access, reuses the recorded tarball
 ./10-deploy-topology.sh
 ./15-admission-tests.sh
 ./20-ingress-tests.sh
@@ -132,6 +135,7 @@ NAD_TYPE=ipvlan ./run-all.sh /path/to/rke2-multus-<version>.tgz
 ./50-custom-rule-test.sh   # reuses the tarball recorded by 00-install-chart.sh
 ./55-network-plugins-test.sh   # idem
 ./60-icmp-test.sh              # idem
+./65-prime-images-test.sh      # idem; PRIME_TEST_DNC=1 to also test the DNC
 
 # Tear down the test topology (add --all to also roll the rke2-multus release back):
 ./90-cleanup.sh
@@ -157,6 +161,8 @@ Environment variables, in addition to the `RECONCILE_*`,
 | `CONTROLLER_LABEL_SELECTOR` | `app=rke2-multus-mnp` | Label selector used to find controller pods. |
 | `NAD_TYPE` | `macvlan` | CNI plugin of `test-net-a`/`test-net-b`: `macvlan` (bridge mode) or `ipvlan` (L2 mode). Must be in the controller's `multiNetworkPolicy.networkPlugins` (both are by default); `10-deploy-topology.sh` checks it and recreates the test pods when the attachments change. A node interface cannot hold macvlan and ipvlan sub-interfaces at once (`device or resource busy`), so other pods using the other type on the same nodes block the switch. |
 | `NAD_MASTER` | `eth0` | Node interface the attachments are created on. |
+| `PRIME_REGISTRY` | `registry.rancher.com` | `global.systemDefaultRegistry` for `65-prime-images-test.sh`. Must serve the hardened images without credentials. |
+| `PRIME_TEST_DNC` | `0` | `1` makes `65-prime-images-test.sh` also enable and check the dynamic networks controller (with the thick plugin). |
 
 ## MNP-020 custom rules through chart values
 
@@ -175,11 +181,37 @@ It then runs the same traffic checks as the upstream suite and restores
 the previous value, checking that the ConfigMap and the rule file flags
 are removed when no custom rules remain.
 
-## Chart test plan cases (F13, F15, F24)
+## Chart test plan cases (P1, F13, F15, F24)
 
 These cases from [multi-netpol-test-chart-plan.yaml](multi-netpol-test-chart-plan.yaml)
 use the plan's IDs:
 
+* **P1** (`05-prime-render-test.sh`, rendering only): RKE2 Prime passes
+  `global.prime.enabled=true` and `global.systemDefaultRegistry` to its
+  charts. The script renders the chart with `helm template`, with mnp and the
+  dynamic networks controller enabled (DNC needs `thickPlugin.enabled=true`).
+  It checks that both DaemonSets use
+  `<systemDefaultRegistry>/<primeRepository>:<primeTag>` (the chart defaults),
+  with no prefix when the registry is empty, and the mirrored images when
+  Prime is off. The registry is `PRIME_TEST_REGISTRY`
+  (default `registry.example.com`). The chart is the first argument,
+  `CHART_TGZ`, or the tarball recorded by `00-install-chart.sh`. It does not
+  check that the images are actually pulled from the registry.
+* **P1** (`65-prime-images-test.sh`, on the cluster): upgrades the release
+  with `global.prime.enabled=true` and
+  `global.systemDefaultRegistry=$PRIME_REGISTRY` (default
+  `registry.rancher.com`, which allows anonymous pulls). It checks that the
+  mnp DaemonSet and its running pods use
+  `<registry>/<primeRepository>:<primeTag>`, with an image ID from that
+  registry, that every DaemonSet of the release (multus, whereabouts) uses
+  the registry, and that the hardened controller enforces MNP-007. It then
+  rolls the release back to its previous revision with `helm rollback` and
+  checks the images are restored. With `PRIME_TEST_DNC=1` it also enables
+  the dynamic networks controller, which needs the thick plugin and the
+  multus ConfigMap. Every multus pod is then replaced on upgrade and again on
+  rollback, so the switch is opt-in. RKE2's own `prime: true` would switch
+  every system chart, which is why the test sets the values on this release
+  only.
 * **F24** (`42-networkpolicy-coexistence-test.sh`): a Kubernetes
   `NetworkPolicy` ([policies/np-f24-allow-client-b.yaml](policies/np-f24-allow-client-b.yaml))
   allows only `app=client-b` to reach the server on eth0, while MNP-007 allows
