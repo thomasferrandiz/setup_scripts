@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # P1 (on cluster): upgrades the release with global.prime.enabled=true and
 # global.systemDefaultRegistry=PRIME_REGISTRY, as RKE2 Prime sets them, then
-# checks that the mnp controller (and, with PRIME_TEST_DNC=1, the dynamic
-# networks controller) runs the hardened primeRepository:primeTag image
-# pulled from PRIME_REGISTRY, that every DaemonSet of the release uses that
-# registry, and that the hardened controller enforces MNP-007. Rolls the
-# release back to its previous revision at the end.
+# also enables the dynamic networks controller (DNC, which needs the thick
+# plugin the suite runs with) and checks that the mnp controller and the DNC
+# run the hardened primeRepository:primeTag images pulled from
+# PRIME_REGISTRY, that every DaemonSet of the release uses that registry, and
+# that the hardened controller enforces MNP-007. Rolls the release back to
+# its previous revision at the end.
 # PRIME_REGISTRY must serve the images without credentials (default
-# registry.rancher.com, which allows anonymous pulls). PRIME_TEST_DNC=1 also
-# enables the DNC, which needs the thick multus plugin, so every multus pod
-# is replaced twice (on upgrade and on rollback).
+# registry.rancher.com, which allows anonymous pulls).
 # Requires 00-install-chart.sh and 10-deploy-topology.sh to have run first.
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
@@ -18,7 +17,6 @@ load_topology
 load_chart_state
 
 PRIME_REGISTRY="${PRIME_REGISTRY:-registry.rancher.com}"
-PRIME_TEST_DNC="${PRIME_TEST_DNC:-0}"
 POLICY_FILE="${POLICIES_DIR}/static/mnp-007-ingress-allow-client.yaml"
 POLICY_NAME="mnp-ingress-allow-client"
 VALUES_FILE="${RESULTS_DIR}/prime-values.json"
@@ -92,10 +90,11 @@ MNP_IMAGE="${PRIME_REGISTRY}/$(chart_default multiNetworkPolicy primeRepository)
 DNC_IMAGE="${PRIME_REGISTRY}/$(chart_default dynamicNetworksController primeRepository):$(chart_default dynamicNetworksController primeTag)"
 
 log "P1: upgrading ${HELM_RELEASE} (revision ${SAVED_REVISION}) with prime enabled, systemDefaultRegistry=${PRIME_REGISTRY}"
-jq -n --arg reg "${PRIME_REGISTRY}" --argjson dnc "$([[ "${PRIME_TEST_DNC}" == 1 ]] && echo true || echo false)" '
+TEST_DNC=0
+multus_is_thick && TEST_DNC=1
+jq -n --arg reg "${PRIME_REGISTRY}" --argjson dnc "$([[ "${TEST_DNC}" == 1 ]] && echo true || echo false)" '
   {global: {prime: {enabled: true}, systemDefaultRegistry: $reg}}
-  + if $dnc then {dynamicNetworksController: {enabled: true}, thickPlugin: {enabled: true},
-                  manifests: {configMap: true}} else {} end' > "${VALUES_FILE}"
+  + if $dnc then {dynamicNetworksController: {enabled: true}} else {} end' > "${VALUES_FILE}"
 if helm_upgrade_chart "${CHART_TGZ}" -f "${VALUES_FILE}" --wait --timeout 5m >/dev/null; then
   pass_line "helm upgrade with prime enabled succeeded"
 else
@@ -106,13 +105,13 @@ wait_release_rollout
 log "P1: hardened controller images"
 check_ds_image "${CONTROLLER_DAEMONSET}" "${CONTROLLER_CONTAINER}" "${MNP_IMAGE}"
 check_controller_pods "${CONTROLLER_DAEMONSET}" "${CONTROLLER_CONTAINER}" "${MNP_IMAGE}"
-if [[ "${PRIME_TEST_DNC}" == 1 ]]; then
+if [[ "${TEST_DNC}" == 1 ]]; then
   DNC_DS="${HELM_RELEASE}-dnc"
   DNC_CONTAINER="$(ds_images "${DNC_DS}" | awk -F= -v img="${DNC_IMAGE}" '$2 == img { print $1; exit }')"
   check_ds_image "${DNC_DS}" "${DNC_CONTAINER:-dynamic-networks-controller}" "${DNC_IMAGE}"
   [[ -n "${DNC_CONTAINER}" ]] && check_controller_pods "${DNC_DS}" "${DNC_CONTAINER}" "${DNC_IMAGE}"
 else
-  na_line "dynamic networks controller not enabled (set PRIME_TEST_DNC=1 to test it with the thick plugin)"
+  na_line "dynamic networks controller not tested: the release does not run the thick plugin"
 fi
 
 log "P1: every release DaemonSet uses ${PRIME_REGISTRY}"

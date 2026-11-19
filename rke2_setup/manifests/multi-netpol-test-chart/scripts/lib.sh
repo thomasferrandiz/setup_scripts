@@ -47,6 +47,7 @@ CONTROLLER_DAEMONSET="${HELM_RELEASE}-mnp"
 CONTROLLER_LABEL_SELECTOR="${CONTROLLER_LABEL_SELECTOR:-app=rke2-multus-mnp}"
 CONTROLLER_CONTAINER="${CONTROLLER_CONTAINER:-multi-networkpolicy-nftables}"
 CUSTOM_RULES_CM="${HELM_RELEASE}-mnp-custom-rules"
+MULTUS_DAEMONSET="${HELM_RELEASE}"   # thin or thick multus DaemonSet, same name
 RECONCILE_TIMEOUT="${RECONCILE_TIMEOUT:-45}"      # max seconds to wait for confirmed reconciliation
 RECONCILE_POLL_INTERVAL="${RECONCILE_POLL_INTERVAL:-3}"
 # Extra settle time after a confirmed "reconciled successfully" log line
@@ -404,6 +405,19 @@ chart_default() {
 # replaced because a values change altered the pod template.
 wait_controller_rollout() {
   kubectl rollout status -n "${CONTROLLER_NAMESPACE}" "daemonset/${CONTROLLER_DAEMONSET}" --timeout=180s
+}
+
+# wait_multus_rollout
+# Waits for the multus DaemonSet, e.g. after switching between thin and thick.
+wait_multus_rollout() {
+  kubectl rollout status -n "${HELM_NAMESPACE}" "daemonset/${MULTUS_DAEMONSET}" --timeout=300s
+}
+
+# multus_is_thick
+# Succeeds if the release runs the thick plugin (thickPlugin.enabled).
+multus_is_thick() {
+  helm get values "${HELM_RELEASE}" -n "${HELM_NAMESPACE}" --all -o json \
+    | jq -e '.thickPlugin.enabled == true' >/dev/null
 }
 
 # controller_args

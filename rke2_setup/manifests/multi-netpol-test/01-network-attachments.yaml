@@ -7,6 +7,13 @@
 # Adjust "master" to match the host interface used by your cluster nodes
 # (see rke2_setup/manifests/multus_demo_nad.yaml for the reference example
 # this is modeled on).
+#
+# Both attachments are sub-interfaces of the same node interface, so they
+# share one L2 segment. By default (arp_ignore=0) a pod answers ARP for its
+# test-net-a IP on net2 too, and whichever reply wins decides the interface
+# the traffic enters through: traffic entering on net2 bypasses a
+# test-net-a policy. The tuning plugin sets arp_ignore=1 (answer only on the
+# interface that owns the IP) and arp_announce=2 in every test pod.
 apiVersion: "k8s.cni.cncf.io/v1"
 kind: NetworkAttachmentDefinition
 metadata:
@@ -27,7 +34,11 @@ spec:
                       "range": "192.168.101.0/24"
                     }
                 }, {
-                    "type": "tuning"
+                    "type": "tuning",
+                    "sysctl": {
+                      "net.ipv4.conf.all.arp_ignore": "1",
+                      "net.ipv4.conf.all.arp_announce": "2"
+                    }
                 } ]
         }'
 ---
@@ -51,6 +62,10 @@ spec:
                       "range": "192.168.102.0/24"
                     }
                 }, {
-                    "type": "tuning"
+                    "type": "tuning",
+                    "sysctl": {
+                      "net.ipv4.conf.all.arp_ignore": "1",
+                      "net.ipv4.conf.all.arp_announce": "2"
+                    }
                 } ]
         }'

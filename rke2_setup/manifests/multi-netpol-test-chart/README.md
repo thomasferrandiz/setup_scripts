@@ -68,6 +68,15 @@ Everything listed in [multi-netpol-test](../multi-netpol-test/README.md#prerequi
   the shared `01-network-attachments.yaml`.
 * whereabouts IPAM: `values-mnp.yaml` enables the chart's
   `rke2-whereabouts` subchart, so the kit installs it.
+* Multus thick plugin: `values-mnp.yaml` sets `thickPlugin.enabled: true`
+  (it needs `manifests.configMap`, on by default), so the whole suite runs
+  with the multus daemon and `multus-shim` instead of the thin plugin.
+  `00-install-chart.sh` fails if the release does not end up on the thick
+  plugin. `10-deploy-topology.sh` labels the test pods
+  `mnp-test/multus-mode=thick|thin` and recreates pods attached by the
+  other mode, e.g. pods left over from a thin run. `90-cleanup.sh --all`
+  rolls the release back to its previous revision, so back to thin if
+  that's what the cluster ran.
 * `helm` (v3.14+ or v4, for `--reset-then-reuse-values`) on the machine
   running the scripts, with a kubeconfig allowed to manage releases in
   `kube-system`.
@@ -94,7 +103,8 @@ helm upgrade --install rke2-multus <tgz> -n kube-system \
 `--reset-then-reuse-values` starts from the new chart's defaults and keeps
 the values the release was installed with (e.g. by the RKE2
 helm-controller: `global.systemDefaultRegistry`, ...), so Multus itself
-keeps its configuration and only the controller is turned on.
+keeps its configuration apart from the switch to the thick plugin, and the
+controller is turned on.
 
 Other details:
 
@@ -135,7 +145,7 @@ NAD_TYPE=ipvlan ./run-all.sh /path/to/rke2-multus-<version>.tgz
 ./50-custom-rule-test.sh   # reuses the tarball recorded by 00-install-chart.sh
 ./55-network-plugins-test.sh   # idem
 ./60-icmp-test.sh              # idem
-./65-prime-images-test.sh      # idem; PRIME_TEST_DNC=1 to also test the DNC
+./65-prime-images-test.sh      # idem
 
 # Tear down the test topology (add --all to also roll the rke2-multus release back):
 ./90-cleanup.sh
@@ -162,7 +172,6 @@ Environment variables, in addition to the `RECONCILE_*`,
 | `NAD_TYPE` | `macvlan` | CNI plugin of `test-net-a`/`test-net-b`: `macvlan` (bridge mode) or `ipvlan` (L2 mode). Must be in the controller's `multiNetworkPolicy.networkPlugins` (both are by default); `10-deploy-topology.sh` checks it and recreates the test pods when the attachments change. A node interface cannot hold macvlan and ipvlan sub-interfaces at once (`device or resource busy`), so other pods using the other type on the same nodes block the switch. |
 | `NAD_MASTER` | `eth0` | Node interface the attachments are created on. |
 | `PRIME_REGISTRY` | `registry.rancher.com` | `global.systemDefaultRegistry` for `65-prime-images-test.sh`. Must serve the hardened images without credentials. |
-| `PRIME_TEST_DNC` | `0` | `1` makes `65-prime-images-test.sh` also enable and check the dynamic networks controller (with the thick plugin). |
 
 ## MNP-020 custom rules through chart values
 
@@ -206,10 +215,9 @@ use the plan's IDs:
   registry, that every DaemonSet of the release (multus, whereabouts) uses
   the registry, and that the hardened controller enforces MNP-007. It then
   rolls the release back to its previous revision with `helm rollback` and
-  checks the images are restored. With `PRIME_TEST_DNC=1` it also enables
-  the dynamic networks controller, which needs the thick plugin and the
-  multus ConfigMap. Every multus pod is then replaced on upgrade and again on
-  rollback, so the switch is opt-in. RKE2's own `prime: true` would switch
+  checks the images are restored. It also enables the dynamic networks
+  controller (DNC), which needs the thick plugin the suite runs with, and
+  checks its image the same way. RKE2's own `prime: true` would switch
   every system chart, which is why the test sets the values on this release
   only.
 * **F24** (`42-networkpolicy-coexistence-test.sh`): a Kubernetes

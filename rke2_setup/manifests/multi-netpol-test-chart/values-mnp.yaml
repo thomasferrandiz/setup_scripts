@@ -8,3 +8,7 @@ multiNetworkPolicy:
 # install by default.
 rke2-whereabouts:
   enabled: true
+# The suite runs with the thick plugin (multus daemon + multus-shim). It
+# needs manifests.configMap, which the chart enables by default.
+thickPlugin:
+  enabled: true

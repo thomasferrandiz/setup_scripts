@@ -66,7 +66,12 @@ fi
 log "helm upgrade --install ${HELM_RELEASE} (previous revision: ${PREV_REVISION:-none})"
 helm_upgrade_chart "${CHART_TGZ}"
 
-log "Waiting for controller DaemonSet rollout"
+log "Waiting for the multus (thick) and controller DaemonSet rollouts"
+if ! multus_is_thick; then
+  echo "ERROR: the release does not run the multus thick plugin; keep thickPlugin.enabled=true in ${CHART_VALUES}" >&2
+  exit 1
+fi
+wait_multus_rollout
 wait_controller_rollout
 
 log "Verifying CRD discovery"

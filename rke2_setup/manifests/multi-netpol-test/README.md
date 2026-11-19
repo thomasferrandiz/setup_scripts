@@ -44,6 +44,11 @@ manually.
   nodes' physical interface is not `eth0` (see
   [multus_demo_nad.yaml](../multus_demo_nad.yaml) for the existing
   convention this is modeled on).
+* The `tuning` CNI plugin. Both attachments sit on the same node interface,
+  so the `tuning` plugin sets `arp_ignore=1` and `arp_announce=2` in the test
+  pods. Otherwise a pod can answer ARP for its test-net-a IP on net2, and
+  traffic entering on net2 bypasses test-net-a policies (deny checks fail
+  depending on which ARP reply wins).
 * The `wbitt/network-multitool:extra` image (used for all test pods) must
   be pullable from the cluster; it provides `nc` and `socat`, both used
   directly by the test scripts and pod listeners.

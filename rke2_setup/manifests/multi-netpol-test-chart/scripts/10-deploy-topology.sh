@@ -5,6 +5,7 @@
 # for use by all other test scripts.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
+require_helm
 
 attachments_file="${RESULTS_DIR}/01-network-attachments.yaml"
 render_network_attachments "${attachments_file}"
@@ -26,9 +27,18 @@ log "Applying namespaces, NetworkAttachmentDefinitions (${NAD_TYPE} on ${NAD_MAS
 kubectl apply -f "${SHARED_DIR}/00-namespaces.yaml"
 previous_nads="$(nad_configs)"
 kubectl apply -f "${attachments_file}"
+# Test pods are labeled with the multus mode that attached their interfaces,
+# so pods created before a switch to the thick plugin are recreated.
+multus_is_thick && multus_mode=thick || multus_mode=thin
+stale_pods="$(kubectl get pods -n mnp-test-a -l "mnp-test/multus-mode!=${multus_mode}" -o name 2>/dev/null
+  kubectl get pods -n mnp-test-b -l "mnp-test/multus-mode!=${multus_mode}" -o name 2>/dev/null)"
 if [[ -n "${previous_nads}" && "${previous_nads}" != "[]" && "${previous_nads}" != "$(nad_configs)" ]]; then
   # Pods keep the interfaces they were created with; recreate them on the new attachments.
   log "Attachments changed; recreating the test pods"
+  kubectl delete pod --all -n mnp-test-a --wait=true
+  kubectl delete pod --all -n mnp-test-b --wait=true
+elif [[ -n "${stale_pods}" ]]; then
+  log "Recreating test pods not attached by the ${multus_mode} multus plugin"
   kubectl delete pod --all -n mnp-test-a --wait=true
   kubectl delete pod --all -n mnp-test-b --wait=true
 fi
@@ -37,6 +47,9 @@ kubectl apply -f "${SHARED_DIR}/02-workloads.yaml"
 log "Waiting for pods to become Ready"
 kubectl wait --for=condition=Ready pod --all -n mnp-test-a --timeout=180s
 kubectl wait --for=condition=Ready pod --all -n mnp-test-b --timeout=180s
+
+kubectl label pod --all -n mnp-test-a --overwrite "mnp-test/multus-mode=${multus_mode}" >/dev/null
+kubectl label pod --all -n mnp-test-b --overwrite "mnp-test/multus-mode=${multus_mode}" >/dev/null
 
 log "Discovering secondary IPs (may take a few seconds after Ready)"
 sleep 3
